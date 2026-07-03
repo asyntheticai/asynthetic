@@ -1,6 +1,6 @@
 {
   "name": "asynthetic",
-  "version": "0.1.0-beta",
+  "version": "0.1.1-beta",
   "description": "Asynthetic — MCP server that gives AI coding agents verified migration maps for fast-moving libraries: exactly what breaks between two versions and how to fix it.",
   "keywords": [
     "mcp",
