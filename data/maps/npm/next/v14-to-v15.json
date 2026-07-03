@@ -1,0 +1,199 @@
+{
+  "ecosystem": "npm",
+  "package": "next",
+  "from_version": "14.2.35",
+  "to_version": "15.0.0",
+  "summary": "Next.js 15 (published 2024-10-21) makes request-time APIs asynchronous and flips core caching defaults. cookies(), headers(), draftMode(), and the params/searchParams props (in layout.js, page.js, route.js, default.js, generateMetadata, generateViewport, and metadata image files) now return Promises and must be awaited (or unwrapped with React use() in client components); synchronous access temporarily works with dev warnings. Caching inverts: fetch() requests, GET Route Handlers, and client-router page segments are no longer cached by default — restore with cache: 'force-cache', dynamic = 'force-static', and experimental.staleTimes respectively. The App Router requires React 19 (Pages Router keeps React 18 compatibility); useFormState is deprecated for useActionState. The external @next/font package is removed in favor of built-in next/font. next.config renames: experimental.bundlePagesExternals -> bundlePagesRouterDependencies, experimental.serverComponentsExternalPackages -> serverExternalPackages. runtime = 'experimental-edge' now errors (use 'edge'). NextRequest geo/ip are removed (use @vercel/functions). next/image drops squoosh (sharp is used automatically), Speed Insights auto-instrumentation is removed, and the minimum Node.js version is 18.18.0. Codemods automate most of it: npx @next/codemod@canary upgrade latest, and next-async-request-api for the async APIs.",
+  "breaking_changes": [
+    {
+      "title": "cookies(), headers(), draftMode() are now async",
+      "description": "The request-time APIs from next/headers return Promises in Next.js 15. Synchronous access still works temporarily (with a dev warning) via the UnsafeUnwrapped* types, but is slated for removal.",
+      "category": "signature-change",
+      "affected_symbols": ["cookies", "headers", "draftMode"],
+      "before_code": "import { cookies, headers } from 'next/headers'\n\nconst cookieStore = cookies()\nconst token = cookieStore.get('token')\n\nconst headersList = headers()\nconst userAgent = headersList.get('user-agent')",
+      "after_code": "import { cookies, headers } from 'next/headers'\n\nconst cookieStore = await cookies()\nconst token = cookieStore.get('token')\n\nconst headersList = await headers()\nconst userAgent = headersList.get('user-agent')",
+      "migration_note": "Add await at every call site (the enclosing function becomes async). Codemod: npx @next/codemod@canary next-async-request-api . — the escape hatch cookies() as unknown as UnsafeUnwrappedCookies logs warnings and only buys time until the next major.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "params and searchParams props are now Promises in pages, layouts, and metadata",
+      "description": "params (in layout.js, page.js, default.js, generateMetadata, generateViewport, opengraph-image, twitter-image, icon, apple-icon) and searchParams (in page.js) are Promise-typed. Server components await them; client components unwrap with React's use().",
+      "category": "signature-change",
+      "affected_symbols": ["params", "searchParams", "generateMetadata", "generateViewport"],
+      "before_code": "type Params = { slug: string }\ntype SearchParams = { [key: string]: string | string[] | undefined }\n\nexport default async function Page({\n  params,\n  searchParams,\n}: {\n  params: Params\n  searchParams: SearchParams\n}) {\n  const { slug } = params\n  const { query } = searchParams\n}",
+      "after_code": "type Params = Promise<{ slug: string }>\ntype SearchParams = Promise<{ [key: string]: string | string[] | undefined }>\n\nexport default async function Page(props: {\n  params: Params\n  searchParams: SearchParams\n}) {\n  const params = await props.params\n  const searchParams = await props.searchParams\n  const slug = params.slug\n  const query = searchParams.query\n}\n\n// Client ('use client') components cannot be async — unwrap with use():\n// import { use } from 'react'\n// const params = use(props.params)",
+      "migration_note": "Update BOTH the runtime access (await / use()) and the prop TYPES (Params becomes Promise<{...}>) — type-only fixes that skip the await produce '[object Promise]' bugs. This is the single most common v15 break agents write incorrectly from v14-era training data. Codemod: next-async-request-api.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "params in Route Handlers are now a Promise",
+      "description": "The second argument of Route Handler methods (GET, POST, …) carries params as a Promise that must be awaited.",
+      "category": "signature-change",
+      "affected_symbols": ["route.js params", "GET", "POST"],
+      "before_code": "type Params = { slug: string }\n\nexport async function GET(request: Request, segmentData: { params: Params }) {\n  const params = segmentData.params\n  const slug = params.slug\n}",
+      "after_code": "type Params = Promise<{ slug: string }>\n\nexport async function GET(request: Request, segmentData: { params: Params }) {\n  const params = await segmentData.params\n  const slug = params.slug\n}",
+      "migration_note": "Same Promise pattern as pages: update the type to Promise<...> and await it inside the handler.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "fetch() requests are no longer cached by default",
+      "description": "Server-side fetch() in the App Router defaults to uncached in v15 (v14 cached by default). Additionally, dynamic = 'force-dynamic' now sets a no-store default on the fetch cache.",
+      "category": "behavior-change",
+      "affected_symbols": ["fetch", "fetchCache"],
+      "before_code": "export default async function RootLayout() {\n  const a = await fetch('https://...') // Cached by default in v14\n}",
+      "after_code": "export default async function RootLayout() {\n  const a = await fetch('https://...') // NOT cached in v15\n  const b = await fetch('https://...', { cache: 'force-cache' }) // Cached\n}\n\n// Or opt a whole layout/page back in:\nexport const fetchCache = 'default-cache'",
+      "migration_note": "Silent performance/cost regression rather than a compile error: origin APIs get hit on every request after upgrading. Re-add caching per request (cache: 'force-cache') or per segment (fetchCache = 'default-cache').",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "GET Route Handlers are no longer cached by default",
+      "description": "In v14, GET Route Handlers were cached by default unless they used dynamic functions/config. In v15 they are uncached by default. Metadata routes (sitemap.ts, opengraph-image.tsx, icon.tsx) remain static by default.",
+      "category": "behavior-change",
+      "affected_symbols": ["GET", "dynamic"],
+      "before_code": "// v14: cached by default\nexport async function GET() {}",
+      "after_code": "// v15: opt back into static caching explicitly\nexport const dynamic = 'force-static'\n\nexport async function GET() {}",
+      "migration_note": "Audit GET route handlers that relied on implicit caching (e.g. expensive computations, third-party calls) and add export const dynamic = 'force-static' where the old behavior is wanted.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "Client Router Cache: page segments no longer reused on navigation",
+      "description": "Page segments get a staleTime of 0: navigating via <Link> or useRouter always fetches fresh page data. Shared layouts and loading.js stay cached (loading.js for 5 minutes), and back/forward navigation still restores from cache.",
+      "category": "behavior-change",
+      "affected_symbols": ["staleTimes", "Link", "useRouter"],
+      "before_code": "// v14: revisiting a page within 30s reused the client cache — no config needed",
+      "after_code": "// next.config.js — opt back into v14-like behavior:\n/** @type {import('next').NextConfig} */\nconst nextConfig = {\n  experimental: {\n    staleTimes: {\n      dynamic: 30,\n      static: 180,\n    },\n  },\n}\n\nmodule.exports = nextConfig",
+      "migration_note": "Apps that felt 'instant' on back-and-forth navigation may issue more server requests after upgrading. experimental.staleTimes restores the old feel; leaving the default guarantees fresh data.",
+      "source_url": "https://nextjs.org/blog/next-15"
+    },
+    {
+      "title": "App Router requires React 19",
+      "description": "Minimum react/react-dom is 19 for the App Router. The Pages Router retains React 18 backward compatibility (running both React versions in one app is possible but not recommended).",
+      "category": "config-change",
+      "affected_symbols": ["react", "react-dom", "@types/react", "@types/react-dom"],
+      "before_code": "// package.json\n\"react\": \"^18.3.1\",\n\"react-dom\": \"^18.3.1\"",
+      "after_code": "// package.json\n\"react\": \"19.x\",\n\"react-dom\": \"19.x\"\n// TypeScript: also upgrade @types/react and @types/react-dom",
+      "migration_note": "Upgrade React together with Next (npx @next/codemod@canary upgrade latest handles it). useFormState is deprecated in favor of useActionState (see deprecations); useFormStatus gains data/method/action keys on React 19.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "@next/font package removed — use built-in next/font",
+      "description": "The external @next/font package no longer works; the font utilities are built into next/font. Font-family hashing was also removed.",
+      "category": "removal",
+      "affected_symbols": ["@next/font", "@next/font/google", "@next/font/local"],
+      "before_code": "import { Inter } from '@next/font/google'",
+      "after_code": "import { Inter } from 'next/font/google'",
+      "migration_note": "Rename imports and drop the @next/font dependency. Codemod: built-in-next-font.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "next.config: experimental.serverComponentsExternalPackages -> serverExternalPackages",
+      "description": "The option is stable and renamed; the experimental key no longer applies.",
+      "category": "config-change",
+      "affected_symbols": ["experimental.serverComponentsExternalPackages", "serverExternalPackages"],
+      "before_code": "const nextConfig = {\n  experimental: {\n    serverComponentsExternalPackages: ['package-name'],\n  },\n}",
+      "after_code": "const nextConfig = {\n  serverExternalPackages: ['package-name'],\n}",
+      "migration_note": "Move the array to the top level under the new name. v15 also adds next.config.ts support with the NextConfig type if you want typed config while touching this file.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "next.config: experimental.bundlePagesExternals -> bundlePagesRouterDependencies",
+      "description": "The Pages Router external-bundling option is stable and renamed.",
+      "category": "config-change",
+      "affected_symbols": ["experimental.bundlePagesExternals", "bundlePagesRouterDependencies"],
+      "before_code": "const nextConfig = {\n  experimental: {\n    bundlePagesExternals: true,\n  },\n}",
+      "after_code": "const nextConfig = {\n  bundlePagesRouterDependencies: true,\n}",
+      "migration_note": "Top-level rename; combine with serverExternalPackages to opt specific packages out of bundling across both routers.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "runtime = 'experimental-edge' now errors",
+      "description": "The segment config value 'experimental-edge' (same meaning as 'edge') is no longer accepted — builds error until it is renamed.",
+      "category": "config-change",
+      "affected_symbols": ["runtime"],
+      "before_code": "export const runtime = 'experimental-edge'",
+      "after_code": "export const runtime = 'edge'",
+      "migration_note": "Straight rename. Codemod: app-dir-runtime-config-experimental-edge.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "NextRequest geo and ip properties removed",
+      "description": "request.geo and request.ip are gone from NextRequest — those values come from the hosting provider. On Vercel, use geolocation() and ipAddress() from @vercel/functions.",
+      "category": "removal",
+      "affected_symbols": ["NextRequest.geo", "NextRequest.ip"],
+      "before_code": "import type { NextRequest } from 'next/server'\n\nexport function middleware(request: NextRequest) {\n  const city = request.geo?.city\n  const ip = request.ip\n}",
+      "after_code": "import { geolocation, ipAddress } from '@vercel/functions'\nimport type { NextRequest } from 'next/server'\n\nexport function middleware(request: NextRequest) {\n  const { city } = geolocation(request)\n  const ip = ipAddress(request)\n}",
+      "migration_note": "npm install @vercel/functions on Vercel; on other hosts read the equivalent request headers your provider sets. A codemod automates the Vercel variant.",
+      "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
+    },
+    {
+      "title": "next/image: squoosh removed, sharp used automatically; Content-Disposition now attachment",
+      "description": "The squoosh WASM optimizer is removed and sharp becomes the (auto-installed at runtime) optimizer for next start and standalone output. The optimized-image Content-Disposition default changed to attachment, and src values with leading/trailing spaces now error.",
+      "category": "removal",
+      "affected_symbols": ["squoosh", "sharp", "next/image"],
+      "before_code": "// v14 self-hosting: sharp was a manual recommendation\n// npm install sharp  (falls back to squoosh if missing)",
+      "after_code": "// v15: no manual step — sharp is used automatically with\n// `next start` or standalone output mode",
+      "migration_note": "Self-hosted deployments no longer silently fall back to slow WASM optimization. Watch the Content-Disposition change if images were expected to render inline when opened directly, and trim whitespace in src values.",
+      "source_url": "https://nextjs.org/blog/next-15"
+    },
+    {
+      "title": "Speed Insights auto-instrumentation removed",
+      "description": "Next.js no longer auto-instruments Vercel Speed Insights; the dedicated @vercel/speed-insights package is required.",
+      "category": "removal",
+      "affected_symbols": ["Speed Insights"],
+      "before_code": null,
+      "after_code": "// npm install @vercel/speed-insights\nimport { SpeedInsights } from '@vercel/speed-insights/next'\n// render <SpeedInsights /> in the root layout",
+      "migration_note": "Follow the Vercel Speed Insights quickstart — metrics silently stop flowing after the upgrade otherwise.",
+      "source_url": "https://nextjs.org/blog/next-15"
+    },
+    {
+      "title": "Minimum Node.js version is 18.18.0",
+      "description": "Next.js 15 raises the minimum required Node.js version to 18.18.0.",
+      "category": "config-change",
+      "affected_symbols": ["node"],
+      "before_code": null,
+      "after_code": "// package.json\n\"engines\": { \"node\": \">=18.18.0\" }",
+      "migration_note": "Update CI images, Dockerfiles, and engines fields; older 18.x patch lines fail.",
+      "source_url": "https://nextjs.org/blog/next-15"
+    },
+    {
+      "title": "revalidateTag/revalidatePath during render now throw",
+      "description": "Calling revalidateTag() or revalidatePath() while a component is rendering is an error in v15; they belong in Server Actions or Route Handlers.",
+      "category": "behavior-change",
+      "affected_symbols": ["revalidateTag", "revalidatePath"],
+      "before_code": "// v14: calling revalidateTag('posts') inside a rendering\n// Server Component happened to work",
+      "after_code": "'use server'\n// v15: revalidation belongs in Server Actions / Route Handlers\nexport async function updatePosts() {\n  // ...mutate data...\n  revalidateTag('posts')\n}",
+      "migration_note": "Move revalidation calls out of render paths into the mutation that triggers them.",
+      "source_url": "https://nextjs.org/blog/next-15"
+    },
+    {
+      "title": "next/dynamic: suspense prop removed; ssr:false disallowed in Server Components",
+      "description": "The deprecated suspense prop is removed (no empty Suspense boundary is inserted in the App Router), and using next/dynamic with ssr: false inside a Server Component is now an error.",
+      "category": "removal",
+      "affected_symbols": ["next/dynamic", "suspense", "ssr: false"],
+      "before_code": "// In a Server Component (v14 tolerated this):\nconst Widget = dynamic(() => import('./widget'), { ssr: false })",
+      "after_code": "// Move the dynamic(..., { ssr: false }) call into a Client Component:\n'use client'\nimport dynamic from 'next/dynamic'\nconst Widget = dynamic(() => import('./widget'), { ssr: false })",
+      "migration_note": "Wrap client-only dynamic imports in a 'use client' component and render that from the server tree.",
+      "source_url": "https://nextjs.org/blog/next-15"
+    }
+  ],
+  "deprecations": [
+    {
+      "symbol": "Synchronous access to cookies()/headers()/draftMode()/params/searchParams",
+      "replacement": "await the API (server) or unwrap with React use() (client); UnsafeUnwrappedCookies/UnsafeUnwrappedHeaders/UnsafeUnwrappedDraftMode type the interim",
+      "removal_timeline": "Temporary compatibility only — warns in development and production until the next major version, where synchronous access is removed.",
+      "note": "The codemod (next-async-request-api) converts most call sites; the UnsafeUnwrapped* casts exist to unblock incremental migration, not as a destination."
+    },
+    {
+      "symbol": "useFormState",
+      "replacement": "useActionState (React 19)",
+      "removal_timeline": "Still available in React 19 but deprecated; will be removed in a future React release.",
+      "note": "useActionState adds direct access to the pending state. useFormStatus additionally gains data, method, and action keys on React 19."
+    }
+  ],
+  "source_urls": [
+    "https://nextjs.org/docs/app/guides/upgrading/version-15",
+    "https://nextjs.org/blog/next-15"
+  ],
+  "last_verified": "2026-07-03",
+  "status": "draft"
+}

@@ -1,0 +1,249 @@
+{
+  "ecosystem": "npm",
+  "package": "ai",
+  "from_version": "4.3.19",
+  "to_version": "5.0.0",
+  "summary": "AI SDK 5.0 (published 2025-07-31) is a ground-up redesign of the Vercel AI SDK. UI packages leave the core: ai/react -> @ai-sdk/react, ai/rsc -> @ai-sdk/rsc, and the LangChain/LlamaIndex adapters move to @ai-sdk/langchain / @ai-sdk/llamaindex. The message system splits into UIMessage (app state, content string replaced by a parts[] array) and ModelMessage (CoreMessage renamed; convertToCoreMessages -> convertToModelMessages). Tools are defined with inputSchema instead of parameters, and tool calls/results use input/output instead of args/result. Core call options rename maxTokens -> maxOutputTokens and providerMetadata -> providerOptions; maxSteps is replaced by stopWhen with stepCountIs()/hasToolCall(). Streaming switches from the custom data-stream protocol to Server-Sent Events: toDataStreamResponse -> toUIMessageStreamResponse, StreamData is removed in favor of createUIMessageStream. useChat is restructured around transports (DefaultChatTransport) and sendMessage, and no longer manages input state. Provider spec moves to LanguageModelV2 (imported from @ai-sdk/provider) with usage renamed promptTokens/completionTokens -> inputTokens/outputTokens. The implicit temperature: 0 default is removed. Requires zod >= 3.25.0 (the guide now recommends Zod 4.1.8+ for TypeScript performance). Official codemods automate much of the mechanical work: npx @ai-sdk/codemod v5 (or 'upgrade'), and Vercel ships a dedicated AI SDK 5 migration MCP server.",
+  "breaking_changes": [
+    {
+      "title": "Upgrade baseline: ai@5, @ai-sdk/* v2, zod >= 3.25.0",
+      "description": "All packages must move in lockstep: ai@5.0.0, @ai-sdk/provider@2.0.0, @ai-sdk/provider-utils@3.0.0, and every @ai-sdk/* provider/UI package to 2.0.0. zod 3.25.0+ is the documented minimum; the current guide recommends zod 4.1.8+ to avoid TypeScript performance issues.",
+      "category": "config-change",
+      "affected_symbols": ["ai", "@ai-sdk/provider", "@ai-sdk/provider-utils", "zod"],
+      "before_code": "// package.json\n\"ai\": \"^4.3.19\",\n\"@ai-sdk/openai\": \"^1.3.0\",\n\"zod\": \"^3.23.8\"",
+      "after_code": "// package.json\n\"ai\": \"^5.0.0\",\n\"@ai-sdk/openai\": \"^2.0.0\",\n\"zod\": \"^3.25.0\"\n\n// npm install ai @ai-sdk/react @ai-sdk/openai zod@3.25.0",
+      "migration_note": "Upgrade every @ai-sdk/* package together — mixing v1-spec providers with ai@5 fails at the provider-interface level. Run the official codemods first: npx @ai-sdk/codemod v5 (they handle most renames below).",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "ai/react and ai/rsc subpaths removed — use @ai-sdk/react and @ai-sdk/rsc",
+      "description": "The framework UI entry points are extracted from the core package: ai/react is removed in favor of @ai-sdk/react, and ai/rsc becomes the separate @ai-sdk/rsc package.",
+      "category": "import-change",
+      "affected_symbols": ["ai/react", "ai/rsc", "useChat", "createStreamableValue"],
+      "before_code": "import { useChat } from 'ai/react';\nimport { createStreamableValue } from 'ai/rsc';",
+      "after_code": "import { useChat } from '@ai-sdk/react';\nimport { createStreamableValue } from '@ai-sdk/rsc';",
+      "migration_note": "Install the new packages (npm install @ai-sdk/react) and rewrite the imports. The useAssistant hook is removed entirely and has no @ai-sdk/react equivalent.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "maxTokens renamed to maxOutputTokens",
+      "description": "The token-limit option on core functions (generateText, streamText, and object generation) is renamed maxTokens -> maxOutputTokens.",
+      "category": "rename",
+      "affected_symbols": ["maxTokens", "generateText", "streamText"],
+      "before_code": "const result = await generateText({\n  model: openai('gpt-4.1'),\n  maxTokens: 1024,\n  prompt: 'Hello!',\n});",
+      "after_code": "const result = await generateText({\n  model: openai('gpt-4.1'),\n  maxOutputTokens: 1024,\n  prompt: 'Hello!',\n});",
+      "migration_note": "Mechanical rename everywhere; the v5 codemod handles it.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Message types renamed: CoreMessage -> ModelMessage, Message -> UIMessage",
+      "description": "The message type system splits into UIMessage (application/UI state, the source of truth) and ModelMessage (what is sent to the LLM). CoreMessage -> ModelMessage, Message -> UIMessage, CreateMessage -> CreateUIMessage, convertToCoreMessages() -> convertToModelMessages().",
+      "category": "rename",
+      "affected_symbols": ["CoreMessage", "Message", "CreateMessage", "convertToCoreMessages"],
+      "before_code": "import { CoreMessage, Message, convertToCoreMessages } from 'ai';\n\nconst modelMessages = convertToCoreMessages(messages);",
+      "after_code": "import { ModelMessage, UIMessage, convertToModelMessages } from 'ai';\n\nconst modelMessages = convertToModelMessages(messages);",
+      "migration_note": "Persist UIMessage (never ModelMessage) as your application state, and call convertToModelMessages() at the model boundary. The deprecated CoreTool* types are also removed.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "UIMessage.content string replaced by parts[] array",
+      "description": "UI messages no longer have a content string. All message content lives in a typed parts[] array (text, reasoning, file, tool parts, custom data parts). The 'data' message role, the message.toolInvocations property, and the message.reasoning property are removed; reasoning parts expose part.text instead of part.reasoning.",
+      "category": "signature-change",
+      "affected_symbols": ["UIMessage.content", "UIMessage.toolInvocations", "UIMessage.reasoning", "role: 'data'"],
+      "before_code": "const message = {\n  id: '1',\n  role: 'user',\n  content: 'Bonjour!',\n};\n\n// rendering\n<div>{message.content}</div>",
+      "after_code": "const message = {\n  id: '1',\n  role: 'user',\n  parts: [{ type: 'text', text: 'Bonjour!' }],\n};\n\n// rendering\n{message.parts.map(part =>\n  part.type === 'text' ? <div key={...}>{part.text}</div> : null\n)}",
+      "migration_note": "Every render path and every persistence path that touches message.content must switch to iterating parts. Custom data previously sent via the 'data' role moves to typed data parts on UI message streams. File parts rename mimeType -> mediaType and data -> url.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Tool definitions: parameters -> inputSchema; args/result -> input/output",
+      "description": "tool() definitions rename parameters -> inputSchema (an optional outputSchema is added, aligning with MCP). Everywhere tool calls and results surface (fullStream parts, steps, onStepFinish), args -> input and result -> output. experimental_toToolResultContent() is replaced by toModelOutput().",
+      "category": "signature-change",
+      "affected_symbols": ["tool", "parameters", "experimental_toToolResultContent", "toolCall.args", "toolResult.result"],
+      "before_code": "const weatherTool = tool({\n  description: 'Get the weather',\n  parameters: z.object({ city: z.string() }),\n  execute: async ({ city }) => ({ temperature: 20 }),\n});\n\nfor await (const part of result.fullStream) {\n  if (part.type === 'tool-call') console.log(part.args);\n  if (part.type === 'tool-result') console.log(part.result);\n}",
+      "after_code": "const weatherTool = tool({\n  description: 'Get the weather',\n  inputSchema: z.object({ city: z.string() }),\n  execute: async ({ city }) => ({ temperature: 20 }),\n});\n\nfor await (const part of result.fullStream) {\n  if (part.type === 'tool-call') console.log(part.input);\n  if (part.type === 'tool-result') console.log(part.output);\n}",
+      "migration_note": "Rename in tool definitions AND in every consumer of tool calls/results. New dynamicTool() helper covers runtime-defined tools (input/output typed unknown; check toolCall.dynamic when mixing with static tools).",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Typed tool UI parts and renamed tool states",
+      "description": "The generic 'tool-invocation' UI part type is replaced by per-tool part types ('tool-getWeather') plus 'dynamic-tool'. Tool part states rename: partial-call -> input-streaming, call -> input-available, result -> output-available, and a new output-error state carries execution failures.",
+      "category": "rename",
+      "affected_symbols": ["part.type === 'tool-invocation'", "state: 'partial-call'", "state: 'call'", "state: 'result'"],
+      "before_code": "if (part.type === 'tool-invocation') {\n  if (part.toolInvocation.state === 'result') {\n    return <Weather data={part.toolInvocation.result} />;\n  }\n}",
+      "after_code": "switch (part.type) {\n  case 'tool-getWeather':\n    if (part.state === 'output-available') {\n      return <Weather data={part.output} />;\n    }\n    break;\n  case 'dynamic-tool':\n    // runtime-defined tools\n    break;\n}",
+      "migration_note": "Chat render code switches from one generic case to a case per tool name. Handle the new output-error state — tool execution failures now arrive here instead of throwing (see ToolExecutionError removal).",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "maxSteps replaced by stopWhen (stepCountIs, hasToolCall)",
+      "description": "The maxSteps numeric limit on generateText/streamText is replaced by stopWhen, which stops multi-step execution when the last step contains tool results and a condition matches. maxSteps is also removed from useChat — step control moves server-side.",
+      "category": "signature-change",
+      "affected_symbols": ["maxSteps", "stopWhen", "stepCountIs", "hasToolCall"],
+      "before_code": "const result = await generateText({\n  model: openai('gpt-4.1'),\n  messages,\n  maxSteps: 5,\n});",
+      "after_code": "import { stepCountIs, hasToolCall } from 'ai';\n\nconst result = await generateText({\n  model: openai('gpt-4.1'),\n  messages,\n  stopWhen: stepCountIs(5), // or [stepCountIs(10), hasToolCall('submitOrder')]\n});",
+      "migration_note": "stepCountIs(n) is the drop-in equivalent of maxSteps: n. Arrays stop on ANY matching condition; custom predicates receive { steps }. experimental_continueSteps is removed with no replacement. step.stepType is removed — infer from position/content.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Stream response helpers renamed: toDataStreamResponse -> toUIMessageStreamResponse",
+      "description": "streamText result helpers rename to the UI-message-stream family: toDataStreamResponse() -> toUIMessageStreamResponse(), pipeDataStreamToResponse() -> pipeUIMessageStreamToResponse(). DataStreamToSSETransformStream -> JsonToSseTransformStream; the streamText getErrorMessage option becomes onError.",
+      "category": "rename",
+      "affected_symbols": ["toDataStreamResponse", "pipeDataStreamToResponse", "DataStreamToSSETransformStream", "getErrorMessage"],
+      "before_code": "// Next.js route handler\nconst result = streamText({ model: openai('gpt-4.1'), prompt });\nreturn result.toDataStreamResponse();\n\n// Express\nresult.pipeDataStreamToResponse(res);",
+      "after_code": "// Next.js route handler\nconst result = streamText({ model: openai('gpt-4.1'), prompt });\nreturn result.toUIMessageStreamResponse();\n\n// Express\nresult.pipeUIMessageStreamToResponse(res);",
+      "migration_note": "Mechanical rename on the server; the response now speaks the SSE-based UI message stream protocol, so the client must be on v5 useChat/transports too — upgrade both sides together.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "StreamData removed — use createUIMessageStream",
+      "description": "The StreamData class (streamData.append(), message annotations) is removed, along with mergeStreams, writeData, and writeMessageAnnotation. Custom data streams to the client via createUIMessageStream/createUIMessageStreamResponse with typed data parts.",
+      "category": "removal",
+      "affected_symbols": ["StreamData", "mergeStreams", "writeData", "writeMessageAnnotation"],
+      "before_code": "import { StreamData } from 'ai';\n\nconst streamData = new StreamData();\nstreamData.append('custom-data');\nstreamData.close();",
+      "after_code": "import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';\n\nconst stream = createUIMessageStream({\n  execute({ writer }) {\n    writer.write({ type: 'data-custom', id: '1', data: 'custom-data' });\n  },\n});\nreturn createUIMessageStreamResponse({ stream });",
+      "migration_note": "Data parts are typed ('data-<name>') and render as parts on UIMessage — message annotations have no direct equivalent; model them as data parts or message metadata.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Streaming wire protocol is now SSE",
+      "description": "The custom data-stream protocol is replaced by standard Server-Sent Events (data stream protocol v2). UIMessageStreamPart is renamed UIMessageChunk.",
+      "category": "behavior-change",
+      "affected_symbols": ["UIMessageStreamPart"],
+      "before_code": null,
+      "after_code": null,
+      "migration_note": "Anything that parsed the v4 wire format directly — custom clients, proxies, edge middleware, non-JS consumers — must be rewritten against the SSE protocol. Debugging improves: streams are visible in standard browser dev tools.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "useChat no longer manages input state",
+      "description": "input, handleInputChange, and handleSubmit are removed from useChat. Applications manage their own input state and call sendMessage.",
+      "category": "removal",
+      "affected_symbols": ["useChat().input", "useChat().handleInputChange", "useChat().handleSubmit"],
+      "before_code": "const { messages, input, handleInputChange, handleSubmit } = useChat({\n  api: '/api/chat',\n});\n\n<form onSubmit={handleSubmit}>\n  <input value={input} onChange={handleInputChange} />\n</form>",
+      "after_code": "const [input, setInput] = useState('');\nconst { messages, sendMessage } = useChat({\n  transport: new DefaultChatTransport({ api: '/api/chat' }),\n});\n\nconst handleSubmit = (e) => {\n  e.preventDefault();\n  sendMessage({ text: input });\n  setInput('');\n};",
+      "migration_note": "Every chat form needs a local useState (or your own form library). sendMessage({ text }) replaces both the old submit path and append().",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "useChat restructured around transports; api option and append removed",
+      "description": "Endpoint configuration moves from the api option to transport objects (DefaultChatTransport). append() -> sendMessage(). The body option is captured at first render and stays static — dynamic values are passed per request or via a body function. Chat sharing by id is replaced by passing a shared Chat instance. id -> chatId in requests; experimental_resume -> resumeStream.",
+      "category": "signature-change",
+      "affected_symbols": ["useChat", "append", "DefaultChatTransport", "keepLastMessageOnError", "initialMessages"],
+      "before_code": "const [temperature, setTemperature] = useState(0.7);\nconst { messages, append } = useChat({\n  api: '/api/chat',\n  initialMessages: saved,\n  body: { temperature }, // updated dynamically in v4\n});\nappend({ role: 'user', content: 'Hello' });",
+      "after_code": "const [temperature, setTemperature] = useState(0.7);\nconst { messages, sendMessage } = useChat({\n  transport: new DefaultChatTransport({ api: '/api/chat' }),\n  messages: saved, // initialMessages -> messages\n});\n// dynamic values go per-request now:\nsendMessage({ text: 'Hello' }, { body: { temperature } });",
+      "migration_note": "The silent trap is body: in v5 it is frozen at first render. Pass request-time values through sendMessage's second argument or a body: () => ({...}) function on the transport.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "LangChainAdapter moved to @ai-sdk/langchain",
+      "description": "LangChainAdapter is removed from the ai package. The adapter lives in @ai-sdk/langchain and switches to the UI message stream API: toUIMessageStream() composed with createUIMessageStreamResponse().",
+      "category": "import-change",
+      "affected_symbols": ["LangChainAdapter", "LangChainAdapter.toDataStreamResponse"],
+      "before_code": "import { LangChainAdapter } from 'ai';\n\nconst response = LangChainAdapter.toDataStreamResponse(stream);",
+      "after_code": "import { toUIMessageStream } from '@ai-sdk/langchain';\nimport { createUIMessageStreamResponse } from 'ai';\n\nconst response = createUIMessageStreamResponse({\n  stream: toUIMessageStream(stream),\n});",
+      "migration_note": "npm install @ai-sdk/langchain. The adapter is now composable: toUIMessageStream() returns a stream you pass to the standard response helpers instead of a one-shot toDataStreamResponse().",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "LlamaIndexAdapter moved to @ai-sdk/llamaindex",
+      "description": "LlamaIndexAdapter is extracted from the ai package to @ai-sdk/llamaindex, following the same UI message stream pattern as the LangChain adapter.",
+      "category": "import-change",
+      "affected_symbols": ["LlamaIndexAdapter", "LlamaIndexAdapter.toDataStreamResponse"],
+      "before_code": "import { LlamaIndexAdapter } from 'ai';\n\nconst response = LlamaIndexAdapter.toDataStreamResponse(stream);",
+      "after_code": "import { toUIMessageStream } from '@ai-sdk/llamaindex';\nimport { createUIMessageStreamResponse } from 'ai';\n\nconst response = createUIMessageStreamResponse({\n  stream: toUIMessageStream(stream),\n});",
+      "migration_note": "npm install @ai-sdk/llamaindex, then compose toUIMessageStream() with createUIMessageStreamResponse().",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "providerMetadata (input) renamed to providerOptions",
+      "description": "The call-level input parameter for provider-specific options renames providerMetadata -> providerOptions on generateText/streamText and friends. The deprecated experimental_providerMetadata is removed outright. (providerMetadata remains the name on RESULTS, where providers return metadata.)",
+      "category": "rename",
+      "affected_symbols": ["providerMetadata", "experimental_providerMetadata"],
+      "before_code": "await generateText({\n  model: openai('gpt-4.1'),\n  prompt,\n  providerMetadata: { openai: { store: false } },\n});",
+      "after_code": "await generateText({\n  model: openai('gpt-4.1'),\n  prompt,\n  providerOptions: { openai: { store: false } },\n});",
+      "migration_note": "Rename only where it is an INPUT. Reading provider metadata off results keeps the providerMetadata name — do not blind-replace.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Usage tokens renamed: promptTokens/completionTokens -> inputTokens/outputTokens",
+      "description": "Token usage properties rename promptTokens -> inputTokens and completionTokens -> outputTokens, with totalTokens now required. On multi-step results, result.usage now covers only the FINAL step; result.totalUsage aggregates all steps.",
+      "category": "rename",
+      "affected_symbols": ["usage.promptTokens", "usage.completionTokens", "result.usage", "result.totalUsage"],
+      "before_code": "const { usage } = await generateText({ model, prompt });\nconsole.log(usage.promptTokens, usage.completionTokens);\n// usage covered ALL steps in v4",
+      "after_code": "const { usage, totalUsage } = await generateText({ model, prompt });\nconsole.log(usage.inputTokens, usage.outputTokens, usage.totalTokens);\n// usage = final step only; totalUsage = all steps",
+      "migration_note": "Billing/monitoring code on multi-step (tool-calling) flows silently undercounts if it keeps reading result.usage — switch aggregate accounting to result.totalUsage.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Reasoning properties renamed",
+      "description": "On generateText/streamText results: result.reasoning (string) -> result.reasoningText, and result.reasoningDetails (array) -> result.reasoning. Per step: step.reasoning -> step.reasoningText. In UI reasoning parts, part.reasoning -> part.text.",
+      "category": "rename",
+      "affected_symbols": ["result.reasoning", "result.reasoningDetails", "step.reasoning", "part.reasoning"],
+      "before_code": "console.log(result.reasoning); // string\nconsole.log(result.reasoningDetails); // array\nfor (const step of steps) console.log(step.reasoning);",
+      "after_code": "console.log(result.reasoningText); // string\nconsole.log(result.reasoning); // array (was reasoningDetails)\nfor (const step of steps) console.log(step.reasoningText);",
+      "migration_note": "Treacherous rename: result.reasoning still EXISTS in v5 but changed type from string to array. Type-checking catches it; string interpolation does not.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "File parts: mimeType -> mediaType, data -> url",
+      "description": "File message parts rename mimeType -> mediaType (IANA media type) and data -> url (data URLs or remote URLs). Transcription models likewise switch mimeType -> mediaType. File attachments become file UI parts.",
+      "category": "rename",
+      "affected_symbols": ["mimeType", "part.data"],
+      "before_code": "{ type: 'file', mimeType: 'image/png', data: base64Data }",
+      "after_code": "{ type: 'file', mediaType: 'image/png', url: 'data:image/png;base64,...' }",
+      "migration_note": "Applies to message parts, tool result media, and attachment handling. toModelOutput() media values use { type: 'media', mediaType, data }.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Implicit temperature: 0 default removed",
+      "description": "v4 set temperature: 0 by default on model calls. v5 sends no temperature unless you specify one, so the provider's own default (often 1) applies — generation output becomes less deterministic without any code change.",
+      "category": "behavior-change",
+      "affected_symbols": ["temperature"],
+      "before_code": "await generateText({\n  model: openai('gpt-4.1'),\n  prompt,\n  // Implicitly temperature: 0\n});",
+      "after_code": "await generateText({\n  model: openai('gpt-4.1'),\n  prompt,\n  temperature: 0, // Must explicitly set\n});",
+      "migration_note": "Silent output-quality regression risk: add temperature: 0 explicitly wherever v4 behavior (deterministic-ish output) was relied on, e.g. structured extraction or tests.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Provider spec V2: LanguageModelV2 from @ai-sdk/provider",
+      "description": "Custom providers and middleware target the V2 spec. LanguageModelV2 is imported from @ai-sdk/provider (not 'ai'); LanguageModelV1Middleware -> LanguageModelV2Middleware (also from @ai-sdk/provider). The deprecated experimental_wrapLanguageModel is removed, and provider re-exports are dropped from the core package.",
+      "category": "import-change",
+      "affected_symbols": ["LanguageModelV2", "LanguageModelV1Middleware", "experimental_wrapLanguageModel"],
+      "before_code": "import { LanguageModelV2, LanguageModelV1Middleware } from 'ai';",
+      "after_code": "import { LanguageModelV2, LanguageModelV2Middleware } from '@ai-sdk/provider';",
+      "migration_note": "Anyone implementing a custom provider or middleware must re-implement against V2 (new content-part model, usage shape with inputTokens/outputTokens/totalTokens). Community providers must be upgraded to their v2-spec releases before the app moves to ai@5.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "ToolExecutionError removed — errors surface as tool-error parts",
+      "description": "Tool execution failures no longer throw ToolExecutionError from generateText. They arrive as 'tool-error' content parts within steps (and the output-error tool state in UI parts), so multi-step runs continue past individual tool failures.",
+      "category": "removal",
+      "affected_symbols": ["ToolExecutionError"],
+      "before_code": "try {\n  const result = await generateText({ model, tools, prompt });\n} catch (error) {\n  if (error instanceof ToolExecutionError) {\n    handle(error);\n  }\n}",
+      "after_code": "const { steps } = await generateText({ model, tools, prompt });\nconst toolErrors = steps.flatMap(step =>\n  step.content.filter(part => part.type === 'tool-error'),\n);\nfor (const err of toolErrors) handle(err);",
+      "migration_note": "try/catch around generateText no longer sees tool failures — code that relied on it now silently ignores them. Inspect step content (or onStepFinish) for tool-error parts.",
+      "source_url": "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0"
+    },
+    {
+      "title": "Grab-bag removals: onResponse, useAssistant, sendExtraMessageFields, toolCallStreaming, and more",
+      "description": "Removed with no direct replacement or now-default behavior: the onResponse callback; the useAssistant hook; sendExtraMessageFields (UI messages now sent whole by default); keepLastMessageOnError; toolCallStreaming option (tool-call streaming is always on); StreamCallbacks.onCompletion; the getUIText helper; the cosineSimilarity() options parameter. Image models lose per-model settings — maxImagesPerCall moves to the generateImage() call and other settings to providerOptions.",
+      "category": "removal",
+      "affected_symbols": ["onResponse", "useAssistant", "sendExtraMessageFields", "toolCallStreaming", "keepLastMessageOnError", "StreamCallbacks.onCompletion", "getUIText"],
+      "before_code": "await generateImage({\n  model: luma.image('photon-flash-1', {\n    maxImagesPerCall: 5,\n    pollIntervalMillis: 500,\n  }),\n  prompt,\n  n: 10,\n});",
+      "after_code": "await generateImage({\n  model: luma.image('photon-flash-1'),\n  prompt,\n  n: 10,\n  maxImagesPerCall: 5,\n  providerOptions: {\n    luma: { pollIntervalMillis: 500 },\n  },\n});",
+      "migration_note": "Audit for each removed symbol individually — most have pattern replacements (message metadata instead of extra fields, transports instead of onResponse) described in the migration guide.",
+      "source_url": "https://github.com/vercel/ai/releases/tag/ai%405.0.0"
+    }
+  ],
+  "deprecations": [],
+  "source_urls": [
+    "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0",
+    "https://github.com/vercel/ai/blob/ai%405.0.0/content/docs/08-migration-guides/26-migration-guide-5-0.mdx",
+    "https://github.com/vercel/ai/releases/tag/ai%405.0.0",
+    "https://vercel.com/blog/ai-sdk-5",
+    "https://ai-sdk.dev/providers/adapters/langchain"
+  ],
+  "last_verified": "2026-07-03",
+  "status": "draft"
+}

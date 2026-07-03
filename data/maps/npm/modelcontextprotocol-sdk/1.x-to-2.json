@@ -1,0 +1,284 @@
+{
+  "ecosystem": "npm",
+  "package": "@modelcontextprotocol/sdk",
+  "from_version": "1.29.0",
+  "to_version": "2.0.0-beta.2",
+  "summary": "The monolithic @modelcontextprotocol/sdk package is retired in v2 and split into @modelcontextprotocol/server, @modelcontextprotocol/client, @modelcontextprotocol/core (wire schemas), and runtime adapters (@modelcontextprotocol/node, express, hono, fastify). v2 is ESM-only, requires Node.js 20+, and requires Zod ^4.2.0 (Zod v3 schemas fail silently at registration). The variadic server.tool()/prompt()/resource() methods are removed in favor of registerTool()/registerPrompt()/registerResource() config objects using Standard Schema. The handler `extra` parameter is restructured into a `ctx` object (ctx.mcpReq / ctx.http). setRequestHandler/setNotificationHandler take method strings instead of Zod request schemas. McpError is renamed ProtocolError; OAuth error classes are consolidated into OAuthError + OAuthErrorCode. SSEServerTransport and WebSocketClientTransport are removed. Separately from the package upgrade, v2 can OPT IN to the 2026-07-28 stateless protocol revision (no initialize handshake, no Mcp-Session-Id, server/discover probing, inputRequired() replacing sampling/elicitation push); upgrading the SDK alone does NOT change the wire protocol. An official codemod automates most of the mechanical migration: npx @modelcontextprotocol/codemod@beta v1-to-v2 . — v1.x remains supported with bug fixes and security updates for at least 6 months after v2 ships (stable expected 2026-07-28).",
+  "breaking_changes": [
+    {
+      "title": "Package split: @modelcontextprotocol/sdk is retired",
+      "description": "The single @modelcontextprotocol/sdk package splits into focused packages: @modelcontextprotocol/server (servers), @modelcontextprotocol/client (clients), @modelcontextprotocol/core (shared Zod wire schemas), @modelcontextprotocol/node (Node HTTP transport), and framework adapters @modelcontextprotocol/express / hono / fastify. Deep subpath imports (…/server/mcp.js, …/client/index.js) are replaced by package barrels and short subpaths.",
+      "category": "import-change",
+      "affected_symbols": ["@modelcontextprotocol/sdk"],
+      "before_code": "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';\nimport { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';\nimport { Client } from '@modelcontextprotocol/sdk/client/index.js';",
+      "after_code": "import { McpServer } from '@modelcontextprotocol/server';\nimport { StdioServerTransport } from '@modelcontextprotocol/server/stdio';\nimport { Client } from '@modelcontextprotocol/client';",
+      "migration_note": "Replace the @modelcontextprotocol/sdk dependency with @modelcontextprotocol/server and/or @modelcontextprotocol/client. Server code imports from @modelcontextprotocol/server; client code from @modelcontextprotocol/client; shared *Schema constants from @modelcontextprotocol/core. The official codemod rewrites import paths automatically: npx @modelcontextprotocol/codemod@beta v1-to-v2 .",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "ESM-only, Node.js 20+ required",
+      "description": "v2 packages ship as ESM only and require Node.js 20+, Bun, or Deno. CommonJS require() of the SDK no longer works.",
+      "category": "config-change",
+      "affected_symbols": [],
+      "before_code": null,
+      "after_code": null,
+      "migration_note": "Ensure the consuming project runs on Node 20+ and can load ESM (\"type\": \"module\" in package.json, or import from an ESM context). Projects stuck on CJS or Node <20 must stay on v1.x, which remains supported with bug fixes and security updates for at least 6 months after v2 ships.",
+      "source_url": "https://blog.modelcontextprotocol.io/posts/sdk-betas-2026-07-28/"
+    },
+    {
+      "title": "Zod v3 no longer supported — requires zod ^4.2.0",
+      "description": "v2 depends on zod ^4.2.0. Zod v3 can still be installed alongside, but v3 schemas fail SILENTLY at runtime when registered as tool/prompt schemas — no compile error, no throw at registration.",
+      "category": "config-change",
+      "affected_symbols": ["zod"],
+      "before_code": "// package.json\n\"zod\": \"^3.23.0\"",
+      "after_code": "// package.json\n\"zod\": \"^4.2.0\"\n\n// imports\nimport * as z from 'zod'; // or 'zod/v4'",
+      "migration_note": "Upgrade zod to ^4.2.0 BEFORE upgrading the SDK. This failure mode is dangerous: with Zod v3 still installed, schema registration appears to succeed but validation is broken at runtime. Audit every z.* schema passed to registerTool/registerPrompt for Zod v4 compatibility.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "server.tool()/prompt()/resource() variadic methods removed",
+      "description": "The variadic registration methods server.tool(), server.prompt(), and server.resource() are removed. Registration uses registerTool()/registerPrompt()/registerResource() with a single config object (description, inputSchema, etc.).",
+      "category": "removal",
+      "affected_symbols": ["McpServer.tool", "McpServer.prompt", "McpServer.resource"],
+      "before_code": "server.tool('greet', 'Greet a user', { name: z.string() }, async ({ name }) => ({\n  content: [{ type: 'text', text: `Hello, ${name}!` }]\n}));",
+      "after_code": "server.registerTool('greet', {\n  description: 'Greet a user',\n  inputSchema: z.object({ name: z.string() })\n}, async ({ name }) => ({\n  content: [{ type: 'text', text: `Hello, ${name}!` }]\n}));",
+      "migration_note": "Move positional description/schema arguments into the config object. Note the schema becomes a full z.object(...) rather than a raw shape (see the Standard Schema entry). The codemod handles the mechanical rewrite.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "Tool/prompt schemas use Standard Schema — raw Zod shapes deprecated",
+      "description": "inputSchema/outputSchema accept any Standard Schema-compliant object (Zod v4, Valibot, ArkType). Passing a raw shape like { name: z.string() } still works via @deprecated overloads but is slated for removal.",
+      "category": "deprecation",
+      "affected_symbols": ["registerTool", "registerPrompt", "inputSchema", "outputSchema"],
+      "before_code": "server.registerTool('greet', {\n  inputSchema: { name: z.string() } // raw shape\n}, handler);",
+      "after_code": "server.registerTool('greet', {\n  inputSchema: z.object({ name: z.string() }) // explicit schema object\n}, handler);",
+      "migration_note": "Wrap raw shapes in z.object(...). This also unlocks non-Zod validators (Valibot, ArkType) since v2 targets the Standard Schema interface.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "Handler context `extra` restructured into `ctx` (ctx.mcpReq / ctx.http)",
+      "description": "The second handler parameter is renamed extra → ctx and remapped: extra.signal → ctx.mcpReq.signal; extra.requestId → ctx.mcpReq.id; extra.sendRequest() → ctx.mcpReq.send(); extra.sendNotification() → ctx.mcpReq.notify(); extra.requestInfo → ctx.http?.req (web-standard Request); extra.authInfo → ctx.http?.authInfo; extra.closeSSEStream/closeStandaloneSSEStream → ctx.http?.closeSSE()/closeStandaloneSSE(). ctx.http is optional (undefined on stdio).",
+      "category": "signature-change",
+      "affected_symbols": ["RequestHandlerExtra", "extra.signal", "extra.requestId", "extra.sendRequest", "extra.sendNotification", "extra.requestInfo", "extra.authInfo"],
+      "before_code": "server.registerTool('search', config, async (args, extra) => {\n  extra.signal.throwIfAborted();\n  await extra.sendNotification({ method: 'notifications/progress', params: { progress: 1 } });\n});",
+      "after_code": "server.registerTool('search', config, async (args, ctx) => {\n  ctx.mcpReq.signal.throwIfAborted();\n  await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progress: 1 } });\n});",
+      "migration_note": "Protocol-level members live under ctx.mcpReq; HTTP-level members under the OPTIONAL ctx.http (guard with ?. — it is undefined on stdio). The experimental task members (extra.taskStore, extra.taskId, extra.taskRequestedTtl) are removed entirely (see experimental tasks entry). The RequestHandlerExtra<TReq, TNotif> type is replaced by ServerContext/ClientContext without type parameters.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "setRequestHandler/setNotificationHandler take method strings, not Zod schemas",
+      "description": "Spec handlers are registered by method string ('tools/call') instead of a request schema constant (CallToolRequestSchema). Custom (non-spec) methods use a 3-argument form with explicit { params, result } schemas.",
+      "category": "signature-change",
+      "affected_symbols": ["setRequestHandler", "setNotificationHandler"],
+      "before_code": "import { CallToolRequestSchema, ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';\n\nserver.setRequestHandler(CallToolRequestSchema, async (request, extra) => { /* ... */ });\nclient.setNotificationHandler(ToolListChangedNotificationSchema, async (n) => { /* ... */ });",
+      "after_code": "server.setRequestHandler('tools/call', async (request, ctx) => { /* ... */ });\nclient.setNotificationHandler('notifications/tools/list_changed', async (n) => { /* ... */ });\n\n// custom methods declare schemas explicitly:\nserver.setRequestHandler('acme/search',\n  { params: SearchParams, result: SearchResult },\n  async (params, ctx) => { /* ... */ });",
+      "migration_note": "Replace each schema constant with its wire method string. For custom methods, pass { params, result } as the second argument; the handler then receives parsed params directly.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "McpError renamed to ProtocolError; ErrorCode to ProtocolErrorCode",
+      "description": "The protocol-level JSON-RPC error class McpError is renamed ProtocolError, and the ErrorCode enum is renamed ProtocolErrorCode. A new SdkError + SdkErrorCode pair covers SDK-local failures (RequestTimeout, ConnectionClosed, InvalidResult).",
+      "category": "rename",
+      "affected_symbols": ["McpError", "ErrorCode"],
+      "before_code": "import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';\n\nthrow new McpError(ErrorCode.InvalidParams, 'bad input');",
+      "after_code": "import { ProtocolError, ProtocolErrorCode } from '@modelcontextprotocol/core';\n\nthrow new ProtocolError(ProtocolErrorCode.InvalidParams, 'bad input');",
+      "migration_note": "Rename McpError → ProtocolError and ErrorCode → ProtocolErrorCode everywhere. Catch-blocks that distinguish transport/SDK failures should also check the new SdkError/SdkErrorCode.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "StreamableHTTPError renamed SdkHttpError; HTTP status moves from .code to .status",
+      "description": "StreamableHTTPError becomes SdkHttpError (extending SdkError), and the HTTP status is read from .status instead of .code.",
+      "category": "rename",
+      "affected_symbols": ["StreamableHTTPError"],
+      "before_code": "if (error instanceof StreamableHTTPError && error.code === 401) { /* ... */ }",
+      "after_code": "if (error instanceof SdkHttpError && error.status === 401) { /* ... */ }",
+      "migration_note": "Rename the class and switch .code → .status in every check. .code on the old class held the HTTP status, which collided with JSON-RPC error codes — hence the rename.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "OAuth error classes consolidated into OAuthError + OAuthErrorCode",
+      "description": "The ~12 individual OAuth error classes (InvalidRequestError, InvalidClientError, InvalidGrantError, UnauthorizedClientError, …) are replaced by a single OAuthError class discriminated by OAuthErrorCode.",
+      "category": "removal",
+      "affected_symbols": ["InvalidRequestError", "InvalidClientError", "InvalidGrantError", "UnauthorizedClientError"],
+      "before_code": "if (error instanceof InvalidClientError) { /* ... */ }",
+      "after_code": "if (error instanceof OAuthError && error.code === OAuthErrorCode.InvalidClient) { /* ... */ }",
+      "migration_note": "Replace each instanceof check on a specific OAuth error class with instanceof OAuthError plus a code comparison against the matching OAuthErrorCode member.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "SSEServerTransport and WebSocketClientTransport removed",
+      "description": "The deprecated HTTP+SSE server transport and the WebSocket client transport are removed from v2. A frozen v1 copy of the SSE transport is published at @modelcontextprotocol/server-legacy/sse for servers that must keep supporting legacy SSE clients.",
+      "category": "removal",
+      "affected_symbols": ["SSEServerTransport", "WebSocketClientTransport"],
+      "before_code": "import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';",
+      "after_code": "// preferred: migrate to Streamable HTTP\nimport { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';\n// escape hatch for legacy SSE clients:\nimport { SSEServerTransport } from '@modelcontextprotocol/server-legacy/sse';",
+      "migration_note": "Migrate SSE deployments to Streamable HTTP. If legacy SSE clients must still be served, depend on @modelcontextprotocol/server-legacy — but treat it as frozen, unmaintained code. There is no v2 WebSocket client transport.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "StreamableHTTPServerTransport split by runtime (Node vs web-standard)",
+      "description": "StreamableHTTPServerTransport is replaced by NodeStreamableHTTPServerTransport (from @modelcontextprotocol/node, for Node's http module) and WebStandardStreamableHTTPServerTransport (from @modelcontextprotocol/server, for web-standard Request/Response runtimes). For HTTP servers, createMcpHandler from @modelcontextprotocol/server is the new high-level entry point.",
+      "category": "rename",
+      "affected_symbols": ["StreamableHTTPServerTransport"],
+      "before_code": "import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';\n\nconst transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });",
+      "after_code": "import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';\n\nconst transport = new NodeStreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });",
+      "migration_note": "Pick the transport matching your runtime: @modelcontextprotocol/node for Node http, @modelcontextprotocol/server's WebStandardStreamableHTTPServerTransport for fetch-style runtimes, or the express/hono/fastify adapter packages. Upgrading the transport does NOT change the wire protocol — v2 still speaks the 2025-era protocol (sessions, initialize) unless you explicitly opt in to 2026-07-28 via createMcpHandler(factory)/serveStdio(buildServer).",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "Wire-schema constants move from sdk/types.js to @modelcontextprotocol/core",
+      "description": "All Zod wire-schema constants (CallToolResultSchema, InitializeRequestSchema, …) move from @modelcontextprotocol/sdk/types.js to the @modelcontextprotocol/core package.",
+      "category": "import-change",
+      "affected_symbols": ["CallToolResultSchema", "@modelcontextprotocol/sdk/types.js"],
+      "before_code": "import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';",
+      "after_code": "import { CallToolResultSchema } from '@modelcontextprotocol/core';",
+      "migration_note": "Add @modelcontextprotocol/core as a dependency wherever wire schemas are imported directly. Note many uses disappear entirely because setRequestHandler and client.request() no longer take schema arguments. Zod-free alternatives isSpecType.X(value) and specTypeSchemas are exported from the client/server packages.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "Header access is web-standard Headers — bracket access removed",
+      "description": "IsomorphicHeaders (plain-object headers with bracket access) is replaced by the web-standard Headers class on ctx.http.req.",
+      "category": "signature-change",
+      "affected_symbols": ["IsomorphicHeaders", "extra.requestInfo.headers"],
+      "before_code": "const sessionId = extra.requestInfo?.headers['mcp-session-id'];",
+      "after_code": "const sessionId = ctx.http?.req?.headers.get('mcp-session-id');\nconst debug = new URL(ctx.http!.req!.url).searchParams.get('debug');",
+      "migration_note": "Replace bracket access with .get(name) (case-insensitive). URL/query parsing goes through new URL(ctx.http.req.url).",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "Result-schema argument dropped from client.request()/sendRequest() for spec methods",
+      "description": "For spec-defined methods, the result-schema second argument to client.request(), client.callTool(), and ctx.mcpReq.send() is removed — the SDK knows the result shape from the method string.",
+      "category": "signature-change",
+      "affected_symbols": ["Client.request", "Client.callTool", "extra.sendRequest"],
+      "before_code": "const r = await extra.sendRequest(\n  { method: 'sampling/createMessage', params },\n  CreateMessageResultSchema\n);",
+      "after_code": "const r = await ctx.mcpReq.send(\n  { method: 'sampling/createMessage', params }\n);",
+      "migration_note": "Delete the schema argument for spec methods. Custom methods keep explicit schemas via the 3-arg setRequestHandler form on the receiving side.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "completable() nesting inverted for optional schemas",
+      "description": "Optional completable prompt arguments invert: the completable wraps the base schema and .optional() is applied to the result, not the input.",
+      "category": "signature-change",
+      "affected_symbols": ["completable"],
+      "before_code": "completable(z.string().optional(), callback)",
+      "after_code": "completable(z.string(), callback).optional()",
+      "migration_note": "Move .optional() from the inner schema to the completable(...) result.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "list*() client methods auto-aggregate paginated results",
+      "description": "listTools(), listResources(), etc. now follow pagination cursors automatically and return the aggregated list, up to listMaxPages (default 100). Exceeding the cap throws SdkError with SdkErrorCode.ListPaginationExceeded.",
+      "category": "behavior-change",
+      "affected_symbols": ["Client.listTools", "Client.listResources", "Client.listPrompts", "listMaxPages"],
+      "before_code": "// v1: one page per call; caller loops on nextCursor\nlet cursor;\ndo {\n  const page = await client.listTools({ cursor });\n  tools.push(...page.tools);\n  cursor = page.nextCursor;\n} while (cursor);",
+      "after_code": "// v2: aggregation is automatic\nconst { tools } = await client.listTools();",
+      "migration_note": "Delete manual cursor loops — they would now iterate over already-aggregated results. Set listMaxPages if servers may expose more than 100 pages, and handle SdkErrorCode.ListPaginationExceeded.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "Custom Accept headers are appended, not replaced",
+      "description": "StreamableHTTPClientTransport now appends custom Accept values from requestInit.headers to the protocol-required media types (application/json, text/event-stream) instead of letting them replace the header.",
+      "category": "behavior-change",
+      "affected_symbols": ["StreamableHTTPClientTransport", "requestInit.headers.Accept"],
+      "before_code": "// v1: this REPLACED the Accept header entirely\nnew StreamableHTTPClientTransport(url, { requestInit: { headers: { Accept: 'custom/type' } } });",
+      "after_code": "// v2: same code now sends\n// Accept: application/json, text/event-stream, custom/type",
+      "migration_note": "Code that relied on overriding Accept (e.g. to suppress SSE) no longer can; servers that dispatch on an exact Accept value may behave differently after upgrade.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "Experimental tasks (SEP-2663) removed",
+      "description": "The experimental task API is removed: extra.taskStore, extra.taskId, extra.taskRequestedTtl, and the task-handler schema constants (GetTaskRequestSchema, …).",
+      "category": "removal",
+      "affected_symbols": ["extra.taskStore", "extra.taskId", "extra.taskRequestedTtl", "GetTaskRequestSchema"],
+      "before_code": null,
+      "after_code": null,
+      "migration_note": "There is no v2 equivalent in the beta; Tasks land as part of the 2026-07-28 spec revision. Servers using experimental tasks should stay on v1.x until the stable v2 tasks API ships.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "OAuth client hardening: TLS-only token endpoints, issuer binding, finishAuth(params)",
+      "description": "Several security behavior changes: (1) exchangeAuthorization()/refreshAuthorization()/fetchToken() throw InsecureTokenEndpointError for non-https token endpoints (loopback exempt); (2) they also throw OAuthError when the AS returns HTTP 200 with an {error} JSON body; (3) credentials are stamped with an issuer field and enforced per-AS (SEP-2352); (4) transport.finishAuth() takes the full callback URLSearchParams to read code + iss for RFC 9207 mix-up defense; (5) StreamableHTTPClientTransport gains onInsufficientScope ('reauthorize' default | 'throw') for 403 scope step-up (SEP-2350).",
+      "category": "behavior-change",
+      "affected_symbols": ["exchangeAuthorization", "refreshAuthorization", "finishAuth", "OAuthClientProvider", "onInsufficientScope"],
+      "before_code": "await transport.finishAuth(code);",
+      "after_code": "const params = new URL(callbackUrl).searchParams;\nif (params.get('state') !== expectedState) throw new Error('state mismatch');\nawait transport.finishAuth(params); // reads `code` + `iss`",
+      "migration_note": "Pass the full callback searchParams to finishAuth(). Implement the optional discoveryState()/saveDiscoveryState() methods on OAuthClientProvider for issuer binding. Plain-http token endpoints (except localhost/127.0.0.1/::1) now hard-fail. New error classes to handle: InsecureTokenEndpointError, IssuerMismatchError, InsufficientScopeError, AuthorizationServerMismatchError.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    },
+    {
+      "title": "Removed Zod compat helpers and misc types",
+      "description": "Removed: schemaToJson (use z.toJSONSchema() or fromJsonSchema()), parseSchemaAsync (use the schema library's .safeParseAsync()), getSchemaShape(), getSchemaDescription(), isOptionalSchema(), unwrapOptionalSchema(), AnySchema, SchemaOutput, toJsonSchemaCompat, plus Protocol and mergeCapabilities from shared/protocol.js. SchemaInput<T> is replaced by StandardSchemaWithJSON.InferInput<T>. The ResourceTemplate TYPE (wire type) is renamed ResourceTemplateType; the ResourceTemplate CLASS is unchanged.",
+      "category": "removal",
+      "affected_symbols": ["schemaToJson", "parseSchemaAsync", "getSchemaShape", "SchemaInput", "Protocol", "mergeCapabilities", "ResourceTemplate"],
+      "before_code": "import { schemaToJson } from '@modelcontextprotocol/sdk/server/zod-compat.js';\nconst json = schemaToJson(mySchema);",
+      "after_code": "import * as z from 'zod';\nconst json = z.toJSONSchema(mySchema);",
+      "migration_note": "The codemod rewrites SchemaInput<T> automatically. Watch the ResourceTemplate name collision: type-position uses become ResourceTemplateType, value/class uses stay ResourceTemplate.",
+      "source_url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html"
+    }
+  ],
+  "deprecations": [
+    {
+      "symbol": "Server.createMessage()",
+      "replacement": "ctx.mcpReq.send({ method: 'sampling/createMessage', params })",
+      "removal_timeline": "The server→client sampling channel is eliminated in the 2026-07-28 protocol revision; handlers there return inputRequired(...) instead.",
+      "note": "Marked @deprecated in v2 but still functional on the 2025-era protocol."
+    },
+    {
+      "symbol": "Server.listRoots()",
+      "replacement": "ctx.mcpReq.send({ method: 'roots/list' })",
+      "removal_timeline": "The roots capability is deprecated by the 2026-07-28 protocol revision.",
+      "note": "Marked @deprecated in v2 but still functional on the 2025-era protocol."
+    },
+    {
+      "symbol": "Server.sendLoggingMessage()",
+      "replacement": null,
+      "removal_timeline": "The logging capability is deprecated by the 2026-07-28 protocol revision.",
+      "note": "Marked @deprecated in v2; ctx.mcpReq.log() is likewise deprecated."
+    },
+    {
+      "symbol": "Client.setLoggingLevel()",
+      "replacement": null,
+      "removal_timeline": "The logging capability is deprecated by the 2026-07-28 protocol revision.",
+      "note": "Marked @deprecated in v2."
+    },
+    {
+      "symbol": "Client.sendRootsListChanged()",
+      "replacement": null,
+      "removal_timeline": "The roots capability is deprecated by the 2026-07-28 protocol revision.",
+      "note": "Marked @deprecated in v2."
+    },
+    {
+      "symbol": "ctx.mcpReq.requestSampling()",
+      "replacement": "inputRequired(...) return pattern (2026-07-28 protocol)",
+      "removal_timeline": "Eliminated when serving the 2026-07-28 revision.",
+      "note": "On 2026-07-28, handlers return inputRequired({ inputRequests: ... }) and read responses on retry via acceptedContent(ctx.mcpReq.inputResponses, id)."
+    },
+    {
+      "symbol": "capabilities.roots / capabilities.sampling / capabilities.logging",
+      "replacement": "inputRequired(...) return-value pattern for input; no logging replacement",
+      "removal_timeline": "These server→client request channels do not exist on the 2026-07-28 protocol revision.",
+      "note": "Declaring them is deprecated in v2 even on the 2025-era protocol."
+    },
+    {
+      "symbol": "registerClient() (OAuth Dynamic Client Registration)",
+      "replacement": null,
+      "removal_timeline": null,
+      "note": "Marked @deprecated in v2; throws RegistrationRejectedError with status/body/submittedMetadata on rejection."
+    },
+    {
+      "symbol": "Raw Zod shape overloads of registerTool()/registerPrompt()",
+      "replacement": "z.object({ ... }) / any Standard Schema object",
+      "removal_timeline": "Deprecated overloads slated for removal in a later v2 release.",
+      "note": "Still functional in 2.0.0-beta.2."
+    }
+  ],
+  "source_urls": [
+    "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html",
+    "https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28.html",
+    "https://blog.modelcontextprotocol.io/posts/sdk-betas-2026-07-28/",
+    "https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/",
+    "https://github.com/modelcontextprotocol/typescript-sdk/releases"
+  ],
+  "last_verified": "2026-07-03",
+  "status": "draft"
+}
