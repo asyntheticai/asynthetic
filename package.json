@@ -1,7 +1,25 @@
 {
   "name": "asynthetic",
-  "version": "0.1.0",
+  "version": "0.1.0-beta",
   "description": "Asynthetic — MCP server that gives AI coding agents verified migration maps for fast-moving libraries: exactly what breaks between two versions and how to fix it.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "migration",
+    "breaking-changes",
+    "upgrade",
+    "semver",
+    "ai-agents"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asyntheticai/asynthetic.git"
+  },
+  "homepage": "https://github.com/asyntheticai/asynthetic#readme",
+  "bugs": {
+    "url": "https://github.com/asyntheticai/asynthetic/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"

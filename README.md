@@ -1,107 +1,163 @@
-# Asynthetic (MCP Server)
+# Asynthetic
 
-An MCP server that gives AI coding agents **verified migration information for fast-moving libraries**: exactly what breaks between two versions and how to fix it, from hand-curated maps with source citations — instead of hallucinated answers from stale training data.
+**Verified migration maps for AI coding agents, served over MCP.**
 
-> Context7 tells the agent what the current API is. **This tells the agent what changed and how to migrate.**
+LLMs suffer from temporal drift: training data mixes many versions of a library, so an agent confidently writes v4 syntax into a v5 codebase. Asynthetic is an MCP (Model Context Protocol) server that tells agents **exactly what breaks between two versions of a library and how to fix it** — from hand-curated, source-cited migration maps instead of stale model memory.
 
-Every map is hand-curated from authoritative sources (official migration guides, GitHub Releases, spec changelogs), cites its `source_urls`, and carries a `last_verified` date. Maps are never LLM-generated.
+> Context7 tells the agent what the current API is. **Asynthetic tells the agent what changed and how to migrate.**
+
+## How it works
+
+Every migration map is hand-curated from authoritative sources only — official migration guides, GitHub releases, and framework blogs — and every map carries:
+
+- ordered breaking changes with **before/after code snippets**
+- a `category` per change (`signature-change`, `removal`, `rename`, `behavior-change`, `config-change`, `import-change`, `deprecation`)
+- deprecations with replacement symbols and removal timelines
+- **`source_urls` citations** and a **`last_verified` date**
+
+Maps are never LLM-generated. A map that would be wrong is worse than no map, so when nothing verified matches a query, the server says so explicitly and instructs the agent **not** to fabricate migration steps.
 
 ## Tools
 
-| Tool | What it returns |
+| Tool | Returns |
 |---|---|
-| `get_migration(package, from_version, to_version, ecosystem?)` | Full migration map: ordered breaking changes with before/after code, deprecations, citations, `last_verified` |
-| `get_breaking_changes(package, version, ecosystem?)` | Breaking changes introduced when upgrading **to** that version |
+| `get_migration(package, from_version, to_version, ecosystem?)` | The full migration map for the requested upgrade window |
+| `get_breaking_changes(package, version, ecosystem?)` | Breaking changes introduced when upgrading **to** a version |
 | `check_compatibility(...)` | Stub — always returns `implemented: false` (planned) |
 
-Version matching is SemVer-aware: exact string match first, then range/major resolution — `^14.2.0 → ^15.0.0` and `1.20.0 → 2.0.0` both find the covering map. Every non-exact match is disclosed via `match_type`, `resolved_via` (`exact_string` / `semver_range` / `major_version`), and a `match_note`. When nothing matches, the response says `found: false`, tells the agent **not** to fabricate migration steps, and lists the maps that do exist.
+Version arguments accept concrete versions (`14.2.35`), partial versions (`14`), or SemVer ranges (`^14.2.0`, `~4.3.0`, `15.x`). Resolution is exact-first, then SemVer-aware, and always disclosed in the response via `match_type`, `resolved_via` (`exact_string` / `semver_range` / `major_version`), and a `match_note`.
 
-## Quick start (no database needed)
+## Current coverage
 
-```sh
-npm install
-npm run smoke     # builds + runs an end-to-end stdio test
-```
+| Package | Migration | Breaking changes |
+|---|---|---|
+| `@modelcontextprotocol/sdk` | 1.x → 2.0 | 21 |
+| `ai` (Vercel AI SDK) | 4.x → 5.0 | 23 |
+| `next` (Next.js) | 14 → 15 | 17 |
 
-With no Supabase env vars set, the server automatically serves the JSON maps in [`data/maps/`](data/maps/) — it never crashes on missing configuration.
+Coverage is deliberately narrow and deep: fast-moving AI and JavaScript-ecosystem frameworks, curated for correctness over breadth.
 
-## Test interactively with MCP Inspector
+## Quick start
 
-```sh
-npm run inspect
-```
-
-This builds and launches `@modelcontextprotocol/inspector` against `node dist/index.js`. Open the URL it prints (default `http://localhost:6274`), go to **Tools → list**, and try:
-
-- `get_migration` with `package: @modelcontextprotocol/sdk`, `from_version: 1.29.0`, `to_version: 2.0.0-beta.2` → full map, `match_type: "exact"`
-- `get_migration` with `from_version: 1.20.0`, `to_version: 2.0.0` → same map with a `match_note` disclosure
-- `get_migration` with `package: left-pad` → `found: false` + guidance
-
-## Use from Claude Code / Cursor
-
-```sh
-npm run build
-```
-
-Claude Code:
-
-```sh
-claude mcp add asynthetic -- node "F:/MCP ooracle/dist/index.js"
-```
-
-Cursor (`.cursor/mcp.json`) or any client using JSON config:
-
-```json
-{
-  "mcpServers": {
-    "asynthetic": {
-      "command": "node",
-      "args": ["F:/MCP ooracle/dist/index.js"]
-    }
-  }
-}
-```
-
-Add `"env": { "SUPABASE_URL": "...", "SUPABASE_ANON_KEY": "..." }` to serve from Postgres instead of local files.
-
-## Remote (HTTP) deployment
-
-When `PORT` is set (Railway injects it automatically), the server starts an Express HTTP listener instead of stdio:
-
-- `POST/GET/DELETE /mcp` — modern **Streamable HTTP** transport (use this from current clients)
-- `GET /sse` + `POST /messages` — legacy HTTP+SSE transport for older clients
-- `GET /` — health/info JSON
+### Hosted server (HTTP)
 
 ```sh
 claude mcp add --transport http asynthetic https://asynthetic.up.railway.app/mcp
 ```
 
-Without `PORT`, nothing changes: the server speaks stdio exactly as before.
+Or in any client that takes a JSON MCP config:
 
-## Supabase mode
+```json
+{
+  "mcpServers": {
+    "asynthetic": {
+      "url": "https://asynthetic.up.railway.app/mcp"
+    }
+  }
+}
+```
 
-1. Create a Supabase project and run [`schema/schema.sql`](schema/schema.sql) in the SQL editor.
-2. Copy `.env.example` to `.env` and fill in `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and (for seeding) `SUPABASE_SERVICE_ROLE_KEY`.
-3. Seed the curated maps: `npm run seed`
-4. Start the server: `npm start` — stderr logs which store is active.
+### Local (stdio via npm)
 
-## Adding a new migration map
+```sh
+claude mcp add asynthetic -- npx -y asynthetic
+```
 
-1. Curate from **official sources only** (changelog, GitHub Releases, migration guide). Record every URL.
-2. Add a JSON file under `data/maps/<ecosystem>/<package>/<from>-to-<to>.json` following the schema in [`src/types/migration-map.ts`](src/types/migration-map.ts) — it is validated on load and at seed time; invalid maps are skipped with a stderr warning, never served.
-3. Set `status: "draft"` until the before/after snippets have been verified against real code, then flip to `"verified"`. Mark superseded maps `"stale"` instead of deleting them (stale maps are not served).
-4. `npm run seed` to push to Supabase.
+```json
+{
+  "mcpServers": {
+    "asynthetic": {
+      "command": "npx",
+      "args": ["-y", "asynthetic"]
+    }
+  }
+}
+```
+
+The published package bundles the curated maps, so local stdio mode works offline with no database or configuration.
+
+## HTTP endpoints
+
+When the `PORT` environment variable is set, the server runs as an HTTP service (otherwise it speaks stdio):
+
+| Endpoint | Transport |
+|---|---|
+| `POST` / `GET` / `DELETE` `/mcp` | **Streamable HTTP** — the current MCP transport; use this from modern clients |
+| `GET /sse` + `POST /messages` | Legacy HTTP+SSE — compatibility for older clients (protocol 2024-11-05) |
+| `GET /` | Health/info JSON (name, version, active store, endpoints) |
+
+Sessions are managed per client with `Mcp-Session-Id` (Streamable HTTP) or `sessionId` (legacy SSE); each session gets an isolated server instance.
+
+## Response shape
+
+Successful lookups return structured JSON with full verification metadata:
+
+```jsonc
+{
+  "found": true,
+  "match_type": "semver-range",
+  "resolved_via": "semver_range",
+  "match_note": "Resolved via SemVer range processing: ...",
+  "migration": {
+    "package": "next",
+    "from_version": "14.2.35",
+    "to_version": "15.0.0",
+    "breaking_changes": [ /* ordered, with before/after code */ ],
+    "deprecations": [ /* symbol, replacement, removal timeline */ ],
+    "source_urls": ["https://nextjs.org/docs/app/guides/upgrading/version-15"],
+    "last_verified": "2026-07-03",
+    "status": "draft"
+  }
+}
+```
+
+Missed lookups return `found: false`, an explicit anti-hallucination instruction, and the list of maps that do exist.
+
+## Self-hosting
+
+```sh
+git clone https://github.com/asyntheticai/asynthetic.git
+cd asynthetic
+npm install
+npm run build
+```
+
+| Variable | Effect |
+|---|---|
+| *(none)* | Serves the bundled JSON maps from `data/maps/` — zero-config mode |
+| `SUPABASE_URL` + `SUPABASE_ANON_KEY` | Serves from Postgres (run `schema/schema.sql`, then `npm run seed`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Needed by `npm run seed` only |
+| `PORT` | Switches from stdio to the HTTP transports above |
+| `MIGRATION_DATA_DIR` | Overrides the local maps directory |
+
+The server never crashes on missing configuration — absent database credentials fall back to the bundled maps with a note on stderr.
+
+## Development
+
+```sh
+npm run smoke     # build + 17-check end-to-end suite (stdio, Streamable HTTP, and SSE)
+npm run inspect   # build + launch @modelcontextprotocol/inspector against the server
+npm run dev       # run from source over stdio
+```
+
+### Adding a migration map
+
+1. Curate from **official sources only** (changelogs, GitHub releases, migration guides). Record every URL.
+2. Add a JSON file under `data/maps/<ecosystem>/<package>/` following the schema in `src/types/migration-map.ts`. Files are Zod-validated at load and seed time; invalid maps are skipped with a warning, never served.
+3. Set `status: "draft"` until snippets are verified against real code, then `"verified"`. Mark superseded maps `"stale"` (excluded from serving) instead of deleting them.
+4. `npm run seed` to sync Postgres, if used.
 
 ## Project layout
 
 ```
 schema/schema.sql            Postgres tables (migrations, breaking_changes, deprecations)
 src/types/migration-map.ts   TypeScript types + Zod validator for map JSON
-src/store/                   MigrationStore interface, Supabase + local-file backends
-src/index.ts                 MCP server entry point (stdio)
+src/store/                   Store interface, Supabase + local-file backends, SemVer resolver
+src/server.ts                MCP server factory (tool registration)
+src/index.ts                 Entry point: stdio or HTTP by environment
 data/maps/                   Hand-curated migration maps (source of truth)
 scripts/seed.ts              Load data/maps into Supabase
-scripts/smoke.ts             End-to-end stdio smoke test
+scripts/smoke.ts             End-to-end test suite
 ```
 
-Built on `@modelcontextprotocol/sdk` **v1.x (stable)**, Node 22+, Zod, Supabase.
+Built with TypeScript, the official [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk) (v1.x stable line), Zod, Express, and Supabase. Node.js 22+.
