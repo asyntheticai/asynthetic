@@ -193,3 +193,7 @@ scripts/smoke.ts             End-to-end test suite (22 checks, all transports)
 ```
 
 Built with TypeScript, the official [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk) (v1.x stable), Zod, Express, semver, and Supabase. Node.js 22+.
+
+## License
+
+Asynthetic is source-available under the [Business Source License 1.1](LICENSE). In plain terms: reading, modifying, and self-hosting it for your own use — personal, team, or company-internal — is always permitted. What isn't permitted is offering it (or a substantially similar migration-data service) as a hosted product competing with Asynthetic's own offering. On July 4, 2030 the license automatically converts to Apache 2.0. The [LICENSE](LICENSE) file is authoritative; this paragraph is only a summary.

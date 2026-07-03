@@ -2,6 +2,7 @@
   "name": "asynthetic",
   "version": "0.1.1",
   "description": "Asynthetic — MCP server that gives AI coding agents verified migration maps for fast-moving libraries: exactly what breaks between two versions and how to fix it.",
+  "license": "BUSL-1.1",
   "keywords": [
     "mcp",
     "model-context-protocol",
