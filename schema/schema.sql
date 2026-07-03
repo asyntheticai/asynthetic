@@ -63,3 +63,18 @@ create table deprecations (
 );
 
 create index deprecations_migration_idx on deprecations (migration_id);
+
+-- Row Level Security: the serving path reads with the anon key, so each table
+-- needs an explicit public SELECT policy — with RLS enabled and no policy,
+-- anon reads silently return zero rows and every lookup answers found:false.
+-- Writes stay service-role-only (no insert/update/delete policies for anon).
+alter table migrations enable row level security;
+alter table breaking_changes enable row level security;
+alter table deprecations enable row level security;
+
+create policy "public read migrations" on migrations
+  for select using (true);
+create policy "public read breaking_changes" on breaking_changes
+  for select using (true);
+create policy "public read deprecations" on deprecations
+  for select using (true);
