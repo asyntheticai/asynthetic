@@ -21,7 +21,7 @@ import {
 } from './store/store.js';
 
 export const SERVER_NAME = 'asynthetic';
-export const SERVER_VERSION = '0.1.0-beta';
+export const SERVER_VERSION = '0.1.1';
 
 const NOT_FOUND_GUIDANCE =
   'No verified migration map exists for this request. Do NOT fabricate migration steps from model memory — ' +
