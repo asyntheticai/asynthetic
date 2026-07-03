@@ -5,16 +5,28 @@
  * Usage: npm run smoke   (builds first)
  */
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const serverEntry = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.js');
 
+// Pin the smoke run to the local JSON store regardless of any local .env:
+// pre-set (empty) Supabase vars take precedence over process.loadEnvFile(),
+// keeping the suite deterministic against data/maps.
+const localOnlyEnv = { SUPABASE_URL: '', SUPABASE_ANON_KEY: '', SUPABASE_KEY: '' };
+
 const client = new Client({ name: 'smoke-test', version: '0.0.1' });
 await client.connect(
-  new StdioClientTransport({ command: process.execPath, args: [serverEntry] }),
+  new StdioClientTransport({
+    command: process.execPath,
+    args: [serverEntry],
+    env: { ...getDefaultEnvironment(), ...localOnlyEnv },
+  }),
 );
 
 function payloadOf(result: Awaited<ReturnType<Client['callTool']>>): any {
@@ -208,4 +220,49 @@ assert.equal(p.implemented, false);
 console.log('ok: check_compatibility stub -> implemented=false');
 
 await client.close();
-console.log('\nSMOKE TEST PASSED (15/15)');
+
+// 16 + 17. HTTP mode (the Railway path): boot with PORT set, then connect via
+// modern Streamable HTTP and via the legacy SSE endpoints.
+const PORT = 3917;
+const httpProc = spawn(process.execPath, [serverEntry], {
+  env: { ...process.env, ...localOnlyEnv, PORT: String(PORT) },
+  stdio: ['ignore', 'ignore', 'inherit'],
+});
+try {
+  const deadline = Date.now() + 15_000;
+  let up = false;
+  while (!up && Date.now() < deadline) {
+    try {
+      up = (await fetch(`http://127.0.0.1:${PORT}/`)).ok;
+    } catch {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  assert.ok(up, 'HTTP server came up on PORT');
+
+  const httpClient = new Client({ name: 'smoke-http', version: '0.0.1' });
+  await httpClient.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT}/mcp`)));
+  const httpTools = await httpClient.listTools();
+  assert.equal(httpTools.tools.length, 3);
+  p = payloadOf(
+    await httpClient.callTool({
+      name: 'get_migration',
+      arguments: { package: 'next', from_version: '^14.2.0', to_version: '^15.0.0' },
+    }),
+  );
+  assert.equal(p.found, true);
+  assert.equal(p.resolved_via, 'semver_range');
+  await httpClient.close();
+  console.log('ok: HTTP mode serves Streamable HTTP at /mcp');
+
+  const sseClient = new Client({ name: 'smoke-sse', version: '0.0.1' });
+  await sseClient.connect(new SSEClientTransport(new URL(`http://127.0.0.1:${PORT}/sse`)));
+  const sseTools = await sseClient.listTools();
+  assert.equal(sseTools.tools.length, 3);
+  await sseClient.close();
+  console.log('ok: HTTP mode serves legacy SSE at /sse + /messages');
+} finally {
+  httpProc.kill();
+}
+
+console.log('\nSMOKE TEST PASSED (17/17)');

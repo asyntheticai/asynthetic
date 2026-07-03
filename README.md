@@ -64,6 +64,20 @@ Cursor (`.cursor/mcp.json`) or any client using JSON config:
 
 Add `"env": { "SUPABASE_URL": "...", "SUPABASE_ANON_KEY": "..." }` to serve from Postgres instead of local files.
 
+## Remote (HTTP) deployment
+
+When `PORT` is set (Railway injects it automatically), the server starts an Express HTTP listener instead of stdio:
+
+- `POST/GET/DELETE /mcp` — modern **Streamable HTTP** transport (use this from current clients)
+- `GET /sse` + `POST /messages` — legacy HTTP+SSE transport for older clients
+- `GET /` — health/info JSON
+
+```sh
+claude mcp add --transport http asynthetic https://asynthetic.up.railway.app/mcp
+```
+
+Without `PORT`, nothing changes: the server speaks stdio exactly as before.
+
 ## Supabase mode
 
 1. Create a Supabase project and run [`schema/schema.sql`](schema/schema.sql) in the SQL editor.
