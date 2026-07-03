@@ -237,6 +237,32 @@
     }
   ],
   "deprecations": [],
+  "compatible_with": [
+    {
+      "package": "zod",
+      "version_range": ">=3.25.0",
+      "required": true,
+      "note": "Documented minimum for ai@5; the current guide recommends Zod 4.1.8+ to avoid TypeScript performance issues."
+    },
+    {
+      "package": "@ai-sdk/provider",
+      "version_range": "2.0.0",
+      "required": true,
+      "note": "The official v5 guide pins 2.0.0 exactly. Whether later 2.x releases remain compatible is unconfirmed — treat other 2.x versions as unverified, not incompatible."
+    },
+    {
+      "package": "@ai-sdk/provider-utils",
+      "version_range": "3.0.0",
+      "required": true,
+      "note": "The official v5 guide pins 3.0.0 exactly. Whether later 3.x releases remain compatible is unconfirmed — treat other 3.x versions as unverified, not incompatible."
+    },
+    {
+      "package": "@ai-sdk/react",
+      "version_range": "2.0.0",
+      "required": false,
+      "note": "Only when using AI SDK UI in React; replaces the removed ai/react entry point. The guide pins 2.0.0 exactly; later 2.x releases are unconfirmed."
+    }
+  ],
   "source_urls": [
     "https://ai-sdk.dev/docs/migration-guides/migration-guide-5-0",
     "https://github.com/vercel/ai/blob/ai%405.0.0/content/docs/08-migration-guides/26-migration-guide-5-0.mdx",

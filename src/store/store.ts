@@ -20,11 +20,16 @@ export interface MapSummary {
   last_verified: string;
 }
 
+export interface StoreListFilter {
+  ecosystem?: string;
+  package?: string;
+}
+
 export interface MigrationStore {
   /** All non-stale maps for a package (case-insensitive package match). */
   getMapsForPackage(ecosystem: string, pkg: string): Promise<MigrationMap[]>;
-  /** Summaries of every non-stale map in the store. */
-  listMaps(): Promise<MapSummary[]>;
+  /** Summaries of every non-stale map in the store, optionally filtered. */
+  list(filter?: StoreListFilter): Promise<MapSummary[]>;
   /** Human-readable description of the backing store, for stderr logging. */
   describe(): string;
 }
@@ -99,6 +104,23 @@ export function interpretDescriptor(desc: string): DescriptorInfo | null {
 /** Major version of a descriptor ("2.0.0-beta.2" -> 2, "^14.2.0" -> 14). */
 export function majorOf(v: string): number | null {
   return interpretDescriptor(v)?.major ?? null;
+}
+
+/**
+ * Does a version descriptor satisfy a declared peer range?
+ * - Concrete version -> definitive semver.satisfies check.
+ * - Range descriptor -> semver.intersects (some overlap exists; the caller's
+ *   phrasing must reflect that this is "possibly compatible", not a guarantee).
+ * - Unparsable -> 'unknown'.
+ */
+export function satisfiesRange(versionDesc: string, range: string): boolean | 'unknown' {
+  const norm = normalizeVersion(versionDesc);
+  const v = semver.valid(norm, { loose: true });
+  if (v) return semver.satisfies(v, range, { loose: true, includePrerelease: true });
+  if (semver.validRange(norm, { loose: true })) {
+    return semver.intersects(norm, range, { loose: true });
+  }
+  return 'unknown';
 }
 
 /**

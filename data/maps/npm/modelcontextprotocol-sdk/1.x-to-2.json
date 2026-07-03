@@ -272,6 +272,14 @@
       "note": "Still functional in 2.0.0-beta.2."
     }
   ],
+  "compatible_with": [
+    {
+      "package": "zod",
+      "version_range": "^4.2.0",
+      "required": true,
+      "note": "v2 depends on zod ^4.2.0. Zod v3 installs alongside the SDK without error but its schemas fail silently at tool registration."
+    }
+  ],
   "source_urls": [
     "https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2.html",
     "https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28.html",

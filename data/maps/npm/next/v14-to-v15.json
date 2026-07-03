@@ -190,6 +190,20 @@
       "note": "useActionState adds direct access to the pending state. useFormStatus additionally gains data, method, and action keys on React 19."
     }
   ],
+  "compatible_with": [
+    {
+      "package": "react",
+      "version_range": "^19.0.0",
+      "required": true,
+      "note": "App Router minimum. The Pages Router retains React 18 backward compatibility."
+    },
+    {
+      "package": "react-dom",
+      "version_range": "^19.0.0",
+      "required": true,
+      "note": "App Router minimum. The Pages Router retains React 18 backward compatibility."
+    }
+  ],
   "source_urls": [
     "https://nextjs.org/docs/app/guides/upgrading/version-15",
     "https://nextjs.org/blog/next-15"

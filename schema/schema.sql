@@ -23,6 +23,9 @@ create table migrations (
   from_version  text not null,  -- concrete semver the map was verified from (e.g. '1.29.0')
   to_version    text not null,  -- concrete semver the map was verified to   (e.g. '2.0.0-beta.2')
   summary       text not null,
+  -- Peer requirements of to_version (CompatibilityEntry[] as JSON); see
+  -- src/types/migration-map.ts. Empty array when none are curated.
+  compatible_with jsonb not null default '[]'::jsonb,
   source_urls   text[] not null check (cardinality(source_urls) > 0),
   last_verified date not null,
   status        migration_status not null default 'draft',

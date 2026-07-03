@@ -3,8 +3,8 @@
  * and reassembles rows into the same MigrationMap shape the local store serves.
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { MigrationMap } from '../types/migration-map.js';
-import { toSummary, type MapSummary, type MigrationStore } from './store.js';
+import type { CompatibilityEntry, MigrationMap } from '../types/migration-map.js';
+import { toSummary, type MapSummary, type MigrationStore, type StoreListFilter } from './store.js';
 
 interface BreakingChangeRow {
   position: number;
@@ -31,6 +31,7 @@ interface MigrationRow {
   from_version: string;
   to_version: string;
   summary: string;
+  compatible_with: CompatibilityEntry[] | null;
   source_urls: string[];
   last_verified: string;
   status: MigrationMap['status'];
@@ -52,6 +53,7 @@ function rowToMap(row: MigrationRow): MigrationMap {
         affected_symbols: affected_symbols ?? [],
       })),
     deprecations: row.deprecations,
+    compatible_with: row.compatible_with ?? [],
     source_urls: row.source_urls,
     last_verified: row.last_verified,
     status: row.status,
@@ -81,12 +83,16 @@ export class SupabaseStore implements MigrationStore {
     return ((data ?? []) as unknown as MigrationRow[]).map(rowToMap);
   }
 
-  async listMaps(): Promise<MapSummary[]> {
-    const { data, error } = await this.client
+  // Single query with optional WHERE filters — never N queries.
+  async list(filter?: StoreListFilter): Promise<MapSummary[]> {
+    let query = this.client
       .from('migrations')
       .select('ecosystem, package, from_version, to_version, status, last_verified')
       .neq('status', 'stale')
       .order('package');
+    if (filter?.ecosystem) query = query.eq('ecosystem', filter.ecosystem.trim());
+    if (filter?.package) query = query.ilike('package', filter.package.trim());
+    const { data, error } = await query;
     if (error) throw new Error(`Supabase query failed: ${error.message}`);
     return (data ?? []) as MapSummary[];
   }

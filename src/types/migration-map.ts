@@ -5,8 +5,9 @@
  * map JSON files (data/maps/**) before they are inserted into Postgres, so a
  * malformed hand-curated map fails at ingestion, not at serve time.
  */
+import semver from 'semver';
 // zod/v4 subpath: the v1 MCP SDK pairs with the Zod v3 API (used for tool inputs
-// in src/index.ts), while this ingestion validator uses the v4 API. zod@^3.25
+// in src/server.ts), while this ingestion validator uses the v4 API. zod@^3.25
 // ships both, so one installed package serves both consumers.
 import * as z from 'zod/v4';
 
@@ -44,6 +45,29 @@ export interface Deprecation {
   note: string | null;
 }
 
+/**
+ * A peer-dependency requirement of the map's to_version (e.g. next@15 requires
+ * react ^19.0.0). Used by check_peer_compatibility for static SemVer checks.
+ *
+ * Curation rules:
+ * - version_range must come verbatim from an official source. If the source
+ *   pins an exact version, keep the exact pin — do NOT widen to ^x.y.z unless
+ *   the source itself states a range.
+ * - note is an expected part of the schema, not an afterthought: use it for
+ *   scoping caveats ("App Router only"), optional-integration context, or to
+ *   flag that adjacent versions are unconfirmed by the source.
+ */
+export interface CompatibilityEntry {
+  /** Peer package name as published. */
+  package: string;
+  /** SemVer range the peer must satisfy at the map's to_version. */
+  version_range: string;
+  /** false = optional peer, only needed when that integration is used. */
+  required: boolean;
+  /** Caveat/context (e.g. "App Router only"); null when unqualified. */
+  note: string | null;
+}
+
 export interface MigrationMap {
   ecosystem: Ecosystem;
   package: string;
@@ -54,6 +78,8 @@ export interface MigrationMap {
   summary: string;
   breaking_changes: BreakingChange[];
   deprecations: Deprecation[];
+  /** Peer requirements of to_version; empty when none are curated. */
+  compatible_with: CompatibilityEntry[];
   source_urls: string[];
   /** ISO date (YYYY-MM-DD) the sources were last checked against this map. */
   last_verified: string;
@@ -86,6 +112,18 @@ export const DeprecationSchema = z.object({
   note: z.string().min(1).nullable(),
 });
 
+export const CompatibilityEntrySchema = z.object({
+  package: z.string().min(1),
+  version_range: z
+    .string()
+    .min(1)
+    .refine((r) => semver.validRange(r, { loose: true }) !== null, {
+      message: 'version_range must be a valid SemVer range (e.g. "^19.0.0", ">=3.25.0")',
+    }),
+  required: z.boolean().default(true),
+  note: z.string().min(1).nullable().default(null),
+});
+
 export const MigrationMapSchema = z.object({
   ecosystem: z.literal('npm'),
   package: z.string().min(1),
@@ -94,6 +132,7 @@ export const MigrationMapSchema = z.object({
   summary: z.string().min(1),
   breaking_changes: z.array(BreakingChangeSchema).min(1),
   deprecations: z.array(DeprecationSchema),
+  compatible_with: z.array(CompatibilityEntrySchema).default([]),
   source_urls: z.array(z.url()).min(1),
   last_verified: z.iso.date(),
   status: z.enum(['draft', 'verified', 'stale']),

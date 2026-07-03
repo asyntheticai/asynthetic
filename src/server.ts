@@ -8,12 +8,14 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import type { MigrationMap } from './types/migration-map.js';
 import {
   interpretDescriptor,
   majorOf,
   normalizeVersion,
   resolveMigration,
   resolvedViaOf,
+  satisfiesRange,
   toSummary,
   type MigrationStore,
 } from './store/store.js';
@@ -42,6 +44,37 @@ function storeError(err: unknown) {
 
 const packageArg = z.string().min(1).describe('Package name as published, e.g. "@modelcontextprotocol/sdk"');
 const ecosystemArg = z.string().default('npm').describe('Package ecosystem (default "npm")');
+
+// Inline at most this many map summaries in found:false responses; beyond
+// that, point the agent at list_available_maps instead of dumping the list.
+const AVAILABLE_MAPS_INLINE_LIMIT = 10;
+
+/**
+ * Derived confidence signal for responses. Purely additive — the underlying
+ * status field and validation are unchanged.
+ *
+ * Thresholds are a deliberate judgment call and may be revisited:
+ * - status "verified"          -> "high"   (snippets checked against real code)
+ * - status "draft", 2+ sources -> "medium" (multiple independent official sources)
+ * - status "draft", 1 source   -> "low"    (single-source curation)
+ * Stale maps are never served, so they never reach this function in practice.
+ */
+function verificationLevelOf(map: MigrationMap): 'high' | 'medium' | 'low' {
+  if (map.status === 'verified') return 'high';
+  return map.source_urls.length >= 2 ? 'medium' : 'low';
+}
+
+async function notFound(store: MigrationStore, requested: unknown, packageMaps: MigrationMap[]) {
+  const available = packageMaps.length > 0 ? packageMaps.map(toSummary) : await store.list();
+  return jsonResult({
+    found: false,
+    requested,
+    message: NOT_FOUND_GUIDANCE,
+    available_maps: available.slice(0, AVAILABLE_MAPS_INLINE_LIMIT),
+    ...(available.length > AVAILABLE_MAPS_INLINE_LIMIT ? { available_maps_truncated: true } : {}),
+    coverage_hint: 'Call list_available_maps (optional filters: ecosystem, package) to see full coverage.',
+  });
+}
 
 export function buildServer(store: MigrationStore): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
@@ -77,13 +110,7 @@ export function buildServer(store: MigrationStore): McpServer {
         const resolved = resolveMigration(maps, from_version, to_version);
 
         if (!resolved) {
-          const available = maps.length > 0 ? maps.map(toSummary) : await store.listMaps();
-          return jsonResult({
-            found: false,
-            requested,
-            message: NOT_FOUND_GUIDANCE,
-            available_maps: available,
-          });
+          return notFound(store, requested, maps);
         }
 
         const { map, match_type } = resolved;
@@ -103,6 +130,8 @@ export function buildServer(store: MigrationStore): McpServer {
           match_type,
           resolved_via: resolvedViaOf(match_type),
           ...(match_note ? { match_note } : {}),
+          source_count: map.source_urls.length,
+          verification_level: verificationLevelOf(map),
           migration: map,
         });
       } catch (err) {
@@ -138,13 +167,7 @@ export function buildServer(store: MigrationStore): McpServer {
         const matching = target === null ? [] : maps.filter((m) => majorOf(m.to_version) === target.major);
 
         if (matching.length === 0) {
-          const available = maps.length > 0 ? maps.map(toSummary) : await store.listMaps();
-          return jsonResult({
-            found: false,
-            requested,
-            message: NOT_FOUND_GUIDANCE,
-            available_maps: available,
-          });
+          return notFound(store, requested, maps);
         }
 
         return jsonResult({
@@ -163,6 +186,8 @@ export function buildServer(store: MigrationStore): McpServer {
               match_type,
               resolved_via: resolvedViaOf(match_type),
               status: map.status,
+              source_count: map.source_urls.length,
+              verification_level: verificationLevelOf(map),
               last_verified: map.last_verified,
               source_urls: map.source_urls,
               summary: map.summary,
@@ -177,6 +202,130 @@ export function buildServer(store: MigrationStore): McpServer {
     },
   );
 
+  server.registerTool(
+    'list_available_maps',
+    {
+      title: 'List available migration maps',
+      description:
+        'Lists every migration map in the store: package, ecosystem, from_version, to_version, status ' +
+        '(draft/verified/stale), last_verified. Optional filters: ecosystem, package. Use this to discover ' +
+        'coverage before calling get_migration.',
+      inputSchema: {
+        ecosystem: z.string().optional().describe('Filter by ecosystem, e.g. "npm"'),
+        package: z.string().optional().describe('Filter by exact package name (case-insensitive)'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ ecosystem, package: pkg }) => {
+      try {
+        const maps = await store.list({ ecosystem, package: pkg });
+        return jsonResult({ count: maps.length, maps });
+      } catch (err) {
+        return storeError(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'check_peer_compatibility',
+    {
+      title: 'Check peer compatibility between two package versions',
+      description:
+        'Static SemVer check of two known package versions against curated compatible_with peer data from ' +
+        'migration maps. Purely declarative — no filesystem access or project inspection (that is the scope ' +
+        'of the separate, unimplemented check_compatibility). Returns compatible: true | false | "unknown". ' +
+        'Treat "unknown" as absence of curated data, never as evidence of incompatibility.',
+      inputSchema: {
+        package_a: z.string().min(1).describe('First package name, e.g. "next"'),
+        version_a: z.string().min(1).describe('Version (or SemVer range) of package_a, e.g. "15.0.0"'),
+        package_b: z.string().min(1).describe('Second package name, e.g. "react"'),
+        version_b: z.string().min(1).describe('Version (or SemVer range) of package_b, e.g. "18.2.0"'),
+        ecosystem: ecosystemArg,
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ package_a, version_a, package_b, version_b, ecosystem }) => {
+      const requested = { package_a, version_a, package_b, version_b, ecosystem };
+      try {
+        interface PeerCheck {
+          declared_by: string;
+          requires: string;
+          required: boolean;
+          note: string | null;
+          satisfied: boolean | 'unknown';
+        }
+        const checks: PeerCheck[] = [];
+        const sourceMaps = new Map<string, object>();
+
+        // Peer data may be declared on either side of the pair — check both.
+        const directions: Array<[string, string, string, string]> = [
+          [package_a, version_a, package_b, version_b],
+          [package_b, version_b, package_a, version_a],
+        ];
+        for (const [declPkg, declVersion, peerPkg, peerVersion] of directions) {
+          const info = interpretDescriptor(declVersion);
+          if (!info) continue;
+          const maps = await store.getMapsForPackage(ecosystem, declPkg);
+          for (const map of maps) {
+            // compatible_with describes the map's to_version, so only maps
+            // whose target major matches the declared version apply.
+            if (majorOf(map.to_version) !== info.major) continue;
+            const entries = map.compatible_with.filter(
+              (e) => e.package.toLowerCase() === peerPkg.trim().toLowerCase(),
+            );
+            if (entries.length === 0) continue;
+            sourceMaps.set(`${map.package}@${map.from_version}->${map.to_version}`, {
+              ...toSummary(map),
+              source_urls: map.source_urls,
+            });
+            for (const entry of entries) {
+              checks.push({
+                declared_by: `${map.package}@${map.to_version}`,
+                requires: `${entry.package}@${entry.version_range}`,
+                required: entry.required,
+                note: entry.note,
+                satisfied: satisfiesRange(peerVersion, entry.version_range),
+              });
+            }
+          }
+        }
+
+        if (checks.length === 0) {
+          return jsonResult({
+            compatible: 'unknown',
+            requested,
+            reason:
+              'No curated peer-compatibility data covers this package pair. This is absence of data, not ' +
+              'evidence of incompatibility — do not infer either way.',
+            checks: [],
+            source_maps_used: [],
+          });
+        }
+
+        const failed = checks.filter((c) => c.required && c.satisfied === false);
+        const hasUnknown = checks.some((c) => c.satisfied === 'unknown');
+        const compatible = failed.length > 0 ? false : hasUnknown ? ('unknown' as const) : true;
+        const reason =
+          failed.length > 0
+            ? failed
+                .map((c) => `${c.declared_by} requires ${c.requires}${c.note ? ` (${c.note})` : ''}`)
+                .join('; ')
+            : hasUnknown
+              ? 'Some declared requirements could not be evaluated against the given version descriptors.'
+              : checks.map((c) => `${c.declared_by} requires ${c.requires} — satisfied`).join('; ');
+        return jsonResult({
+          compatible,
+          requested,
+          reason,
+          checks,
+          source_maps_used: [...sourceMaps.values()],
+        });
+      } catch (err) {
+        return storeError(err);
+      }
+    },
+  );
+
   // Stub per brief §7/§11: declared so agents can discover it, but explicitly
   // returns "not implemented" — it must never look like real compatibility data.
   server.registerTool(
@@ -184,8 +333,9 @@ export function buildServer(store: MigrationStore): McpServer {
     {
       title: 'Check cross-package compatibility (not yet implemented)',
       description:
-        'PLANNED: known compatibility issues between two package versions. Currently returns implemented=false ' +
-        'and no data. Do not infer compatibility (or incompatibility) from this response.',
+        'PLANNED: project-aware compatibility analysis. Currently returns implemented=false and no data. ' +
+        'Do not infer compatibility (or incompatibility) from this response. For a static SemVer check ' +
+        'between two known package versions, use check_peer_compatibility instead.',
       inputSchema: {
         package_a: z.string().min(1),
         version_a: z.string().min(1),
