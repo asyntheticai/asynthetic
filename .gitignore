@@ -4,3 +4,7 @@ dist/
 !.env.example
 *.tsbuildinfo
 .omc/
+
+# internal planning docs — never commit these
+npm.txt
+asynthetic-brief.md
