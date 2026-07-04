@@ -35,6 +35,7 @@ interface MigrationRow {
   source_urls: string[];
   last_verified: string;
   status: MigrationMap['status'];
+  verified_versions: string[] | null;
   breaking_changes: BreakingChangeRow[];
   deprecations: DeprecationRow[];
 }
@@ -57,6 +58,7 @@ function rowToMap(row: MigrationRow): MigrationMap {
     source_urls: row.source_urls,
     last_verified: row.last_verified,
     status: row.status,
+    ...(row.verified_versions?.length ? { verified_versions: row.verified_versions } : {}),
   };
 }
 

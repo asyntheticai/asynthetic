@@ -38,6 +38,16 @@ export interface BreakingChange {
   migration_note: string;
   /** Per-change citation; falls back to MigrationMap.source_urls when null. */
   source_url: string | null;
+  /**
+   * Empirical-testing caveats, populated during verification: how the entry
+   * was tested, and where the break or its fix behaves differently across
+   * bundlers (Turbopack vs Webpack), dev vs production, or documented-policy
+   * vs actual enforcement. Present only where testing surfaced nuance.
+   */
+  verification_method?: string;
+  after_code_caveat?: string;
+  bundler_caveat?: string;
+  enforcement_status?: string;
 }
 
 export interface Deprecation {
@@ -93,6 +103,11 @@ export interface MigrationMap {
    * field keep compiling; absent means "stable" (the Zod schema defaults it).
    */
   target_release_status?: TargetReleaseStatus;
+  /**
+   * Exact package versions the map was empirically tested against when
+   * status became "verified" (e.g. ["14.2.35", "15.5.20"]).
+   */
+  verified_versions?: string[];
 }
 
 export const BreakingChangeSchema = z.object({
@@ -112,6 +127,10 @@ export const BreakingChangeSchema = z.object({
   after_code: z.string().min(1).nullable(),
   migration_note: z.string().min(1),
   source_url: z.url().nullable(),
+  verification_method: z.string().optional(),
+  after_code_caveat: z.string().optional(),
+  bundler_caveat: z.string().optional(),
+  enforcement_status: z.string().optional(),
 });
 
 export const DeprecationSchema = z.object({
@@ -146,4 +165,5 @@ export const MigrationMapSchema = z.object({
   last_verified: z.iso.date(),
   status: z.enum(['draft', 'verified', 'stale']),
   target_release_status: z.enum(['stable', 'pre-release']).default('stable'),
+  verified_versions: z.array(z.string().min(1)).optional(),
 }) satisfies z.ZodType<MigrationMap>;

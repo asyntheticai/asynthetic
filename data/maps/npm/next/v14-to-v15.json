@@ -23,6 +23,7 @@
       "before_code": "type Params = { slug: string }\ntype SearchParams = { [key: string]: string | string[] | undefined }\n\nexport default async function Page({\n  params,\n  searchParams,\n}: {\n  params: Params\n  searchParams: SearchParams\n}) {\n  const { slug } = params\n  const { query } = searchParams\n}",
       "after_code": "type Params = Promise<{ slug: string }>\ntype SearchParams = Promise<{ [key: string]: string | string[] | undefined }>\n\nexport default async function Page(props: {\n  params: Params\n  searchParams: SearchParams\n}) {\n  const params = await props.params\n  const searchParams = await props.searchParams\n  const slug = params.slug\n  const query = searchParams.query\n}\n\n// Client ('use client') components cannot be async — unwrap with use():\n// import { use } from 'react'\n// const params = use(props.params)",
       "migration_note": "Update BOTH the runtime access (await / use()) and the prop TYPES (Params becomes Promise<{...}>) — type-only fixes that skip the await produce '[object Promise]' bugs. This is the single most common v15 break agents write incorrectly from v14-era training data. Codemod: next-async-request-api.",
+      "verification_method": "runtime-dev-log — unlike cookies()/headers() (breaking_changes[0]), params/searchParams are typed by whatever annotation the page component author writes, not by a Promise-returning function in next/headers' own .d.ts. On a stock create-next-app project (no generated PageProps/route-type checking wired in), a hand-written non-Promise Params/SearchParams type passes `next build` unchanged on both v14 and v15 — verified empirically 2026-07-04. The only detectable v15 signal on an unmodified before_code is a per-request dev-server console warning: 'Route \"/[slug]\" used `params.slug`. `params` should be awaited before using its properties.' (https://nextjs.org/docs/messages/sync-dynamic-apis), while the response still renders correctly (200, correct values) — a silent/soft break, not a build or runtime failure. To verify this entry: start `next dev`, request a route using the before_code, and grep the server log for 'sync-dynamic-apis' rather than asserting `npm run build` fails.",
       "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
     },
     {
@@ -63,6 +64,8 @@
       "before_code": "// v14: revisiting a page within 30s reused the client cache — no config needed",
       "after_code": "// next.config.js — opt back into v14-like behavior:\n/** @type {import('next').NextConfig} */\nconst nextConfig = {\n  experimental: {\n    staleTimes: {\n      dynamic: 30,\n      static: 180,\n    },\n  },\n}\n\nmodule.exports = nextConfig",
       "migration_note": "Apps that felt 'instant' on back-and-forth navigation may issue more server requests after upgrading. experimental.staleTimes restores the old feel; leaving the default guarantees fresh data.",
+      "after_code_caveat": "experimental.staleTimes only restores the v14-like client router caching behavior in production builds (`next build && next start`). Under `next dev` it has no observable effect — a force-dynamic page navigated away from and back to within the configured staleTime still refetches on every navigation. Confirmed 2026-07-04 on Next.js 15.5.20 with both the Turbopack and Webpack dev servers (ruling out bundler choice as the cause); the same config and page correctly reused the cached segment (no refetch) once served via `next start`. This is a real dev/production behavior gap in the fix itself, not just a test-method mismatch — a developer manually checking the fix via `npm run dev` will conclude it doesn't work.",
+      "verification_method": "steps (a) and (b) (confirming default v14 caching and default v15 no-caching) can be verified via `next dev` — click a <Link> to a force-dynamic page, navigate away, navigate back, and check whether a `GET <path>?_rsc=...` request fires (cache miss) or not (cache hit). Step (c) (confirming after_code restores caching) REQUIRES `next build && next start` — testing it via `next dev` gives a false negative per after_code_caveat above.",
       "source_url": "https://nextjs.org/blog/next-15"
     },
     {
@@ -73,6 +76,7 @@
       "before_code": "// package.json\n\"react\": \"^18.3.1\",\n\"react-dom\": \"^18.3.1\"",
       "after_code": "// package.json\n\"react\": \"19.x\",\n\"react-dom\": \"19.x\"\n// TypeScript: also upgrade @types/react and @types/react-dom",
       "migration_note": "Upgrade React together with Next (npx @next/codemod@canary upgrade latest handles it). useFormState is deprecated in favor of useActionState (see deprecations); useFormStatus gains data/method/action keys on React 19.",
+      "enforcement_status": "Not empirically enforced as of Next.js 15.5.20 — confirmed 2026-07-04. On a stock create-next-app App Router scaffold with react/react-dom/@types downgraded to ^18.3.1: `npm install` only emits a soft ERESOLVE peer-dependency warning (does not fail); `next build` (Turbopack) compiles and type-checks with zero errors; a Client Component that calls React's `use()` — the flagship API that is genuinely exclusive to React 19 and absent from the installed React 18.3.1 (`Object.keys(require('react'))` has no `use` export) — still builds, prerenders as Static, and renders correctly with no console errors in both `next start` (production) and `next dev`. This strongly suggests Next.js vendors its own internal React copy for parts of the App Router/RSC runtime, making the project's own installed React version less load-bearing than 'requires' implies. Treat this as Vercel's documented minimum/support policy (see source_url) rather than a currently build- or runtime-enforced constraint: using React 18 with the App Router is unsupported and could break without notice in a future Next.js release, but it is not something a three-way build/runtime test can currently observe failing.",
       "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
     },
     {
@@ -83,6 +87,7 @@
       "before_code": "import { Inter } from '@next/font/google'",
       "after_code": "import { Inter } from 'next/font/google'",
       "migration_note": "Rename imports and drop the @next/font dependency. Codemod: built-in-next-font.",
+      "bundler_caveat": "As of Next.js 15.5.20, this removal is enforced under Webpack builds (`next build` without --turbopack) but NOT under Turbopack, which still special-cases the legacy @next/font/* import path at compile time — even though the underlying @next/font package itself is a dead stub (its published JS unconditionally throws 'failed to run or is incorrectly configured' once past a semver check, meaning the compiler must intercept the import before that code ever executes). Since create-next-app@15 defaults to Turbopack, a project using the default build script (`npm run build` -> `next build --turbopack`) will NOT see this break yet, despite the map's claim — confirmed 2026-07-04 with @next/font@14.2.15 on Next.js 15.5.20: Turbopack built successfully with real @font-face/.woff2 output, plain `next build` (Webpack) failed with 'Failed to collect page data for /font-test'.",
       "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
     },
     {
@@ -113,6 +118,7 @@
       "before_code": "export const runtime = 'experimental-edge'",
       "after_code": "export const runtime = 'edge'",
       "migration_note": "Straight rename. Codemod: app-dir-runtime-config-experimental-edge.",
+      "bundler_caveat": "As of Next.js 15.5.20, this is enforced at build time under both Turbopack and Webpack, and at request time under `next dev` (Webpack). However, `next dev --turbopack` — the scaffold's default dev mode — does NOT enforce this and silently serves the page with HTTP 200 despite the invalid runtime value. A developer using the default dev server will not see this break locally; it will only surface in a production build or CI. Confirmed 2026-07-04.",
       "source_url": "https://nextjs.org/docs/app/guides/upgrading/version-15"
     },
     {
@@ -153,6 +159,7 @@
       "before_code": null,
       "after_code": "// package.json\n\"engines\": { \"node\": \">=18.18.0\" }",
       "migration_note": "Update CI images, Dockerfiles, and engines fields; older 18.x patch lines fail.",
+      "verification_method": "Empirically verified 2026-07-04 by installing a portable Node.js 18.17.1 (nodejs.org dist zip, no nvm/admin install needed) — this version satisfies Next 14's own engine range (>=18.17.0) but falls just short of Next 15's (^18.18.0 || ^19.8.0 || >=20.0.0), isolating the v14-to-v15 boundary specifically rather than testing 'any old Node'. Results: with Node 18.17.1, next@14.2.35's own CLI runs cleanly (`npm install` clean, `next --version` exits 0, prints 'Next.js v14.2.35'). With the identical Node version, next@15.5.20's CLI hard-fails: `npm install` only emits a soft, non-blocking `npm WARN EBADENGINE` (install completes, exit 0, next gets installed) — but invoking the CLI itself is a genuine hard block: `next --version`, `next build`, and `next dev` ALL exit with code 1 and print 'You are using Node.js 18.17.1. For Next.js, Node.js version \"^18.18.0 || ^19.8.0 || >= 20.0.0\" is required.' before doing any other work. So this is a real, empirically-confirmed CLI-level version gate in Next 15 itself — stronger than a mere npm engines warning, and it fully matches this entry's claim. (For contrast, breaking_changes[13] — Speed Insights — remains genuinely untestable locally: it has no user-facing API/CLI surface to invoke at all, so there is nothing analogous to try running.)",
       "source_url": "https://nextjs.org/blog/next-15"
     },
     {
@@ -208,6 +215,7 @@
     "https://nextjs.org/docs/app/guides/upgrading/version-15",
     "https://nextjs.org/blog/next-15"
   ],
-  "last_verified": "2026-07-03",
-  "status": "draft"
+  "last_verified": "2026-07-04",
+  "status": "verified",
+  "verified_versions": ["14.2.35", "15.5.20"]
 }

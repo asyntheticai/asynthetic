@@ -35,6 +35,10 @@ create table migrations (
   --   check (target_release_status in ('stable', 'pre-release'));
   target_release_status text not null default 'stable'
     check (target_release_status in ('stable', 'pre-release')),
+  -- Exact versions empirically tested when status became 'verified'.
+  -- Existing databases: alter table migrations add column
+  --   verified_versions text[] not null default '{}';
+  verified_versions text[] not null default '{}',
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
   unique (ecosystem, package, from_version, to_version)
@@ -54,6 +58,14 @@ create table breaking_changes (
   after_code       text,
   migration_note   text not null, -- plain-language "how to fix"
   source_url       text,          -- per-change citation; falls back to migrations.source_urls when null
+  -- Empirical-testing caveats (see BreakingChange in src/types/migration-map.ts).
+  -- Existing databases: alter table breaking_changes
+  --   add column verification_method text, add column after_code_caveat text,
+  --   add column bundler_caveat text, add column enforcement_status text;
+  verification_method text,
+  after_code_caveat   text,
+  bundler_caveat      text,
+  enforcement_status  text,
   unique (migration_id, position)
 );
 

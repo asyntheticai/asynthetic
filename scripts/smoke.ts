@@ -134,7 +134,12 @@ assert.equal(p.found, true);
 assert.equal(p.match_type, 'exact');
 assert.ok(p.migration.breaking_changes.length >= 15, 'next map has 15+ breaking changes');
 assert.equal(p.source_count, p.migration.source_urls.length, 'source_count derived from source_urls');
-assert.equal(p.verification_level, 'medium', 'draft map with 2+ sources -> medium');
+assert.equal(p.verification_level, 'high', 'verified map -> high');
+assert.deepEqual(p.migration.verified_versions, ['14.2.35', '15.5.20'], 'verified_versions served');
+assert.ok(
+  p.migration.breaking_changes.some((bc: any) => bc.bundler_caveat || bc.verification_method),
+  'verification caveat fields served',
+);
 assert.ok(
   p.migration.breaking_changes.some((bc: any) => bc.title.includes('async')),
   'async request APIs are mapped',
@@ -166,7 +171,7 @@ assert.equal(p.found, true);
 assert.ok(p.results[0].breaking_changes.length >= 15);
 assert.ok(p.results[0].deprecations.length >= 2, 'deprecations present');
 assert.equal(p.results[0].source_count, p.results[0].source_urls.length);
-assert.equal(p.results[0].verification_level, 'medium');
+assert.equal(p.results[0].verification_level, 'high');
 console.log('ok: get_breaking_changes next v15');
 
 // 12. SemVer caret-range resolution (Next.js): ^14.2.0 -> ^15.0.0
