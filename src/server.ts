@@ -58,11 +58,25 @@ const AVAILABLE_MAPS_INLINE_LIMIT = 10;
  * - status "draft", 2+ sources -> "medium" (multiple independent official sources)
  * - status "draft", 1 source   -> "low"    (single-source curation)
  * Stale maps are never served, so they never reach this function in practice.
+ *
+ * Pre-release cap: a map whose to_version is a pre-release
+ * (target_release_status: "pre-release") can never be "high" — even verified
+ * snippets may be invalidated before the target ships stable.
  */
 function verificationLevelOf(map: MigrationMap): 'high' | 'medium' | 'low' {
-  if (map.status === 'verified') return 'high';
-  return map.source_urls.length >= 2 ? 'medium' : 'low';
+  const base = map.status === 'verified' ? 'high' : map.source_urls.length >= 2 ? 'medium' : 'low';
+  if (base === 'high' && isPreRelease(map)) return 'medium';
+  return base;
 }
+
+function isPreRelease(map: MigrationMap): boolean {
+  // Absent field (e.g. Supabase rows predating it) means "stable".
+  return (map.target_release_status ?? 'stable') === 'pre-release';
+}
+
+const PRE_RELEASE_WARNING =
+  'This migration targets a pre-release version that has not shipped as stable. Do not apply to ' +
+  'production code without verifying against the current pre-release build.';
 
 async function notFound(store: MigrationStore, requested: unknown, packageMaps: MigrationMap[]) {
   const available = packageMaps.length > 0 ? packageMaps.map(toSummary) : await store.list();
@@ -132,6 +146,7 @@ export function buildServer(store: MigrationStore): McpServer {
           ...(match_note ? { match_note } : {}),
           source_count: map.source_urls.length,
           verification_level: verificationLevelOf(map),
+          ...(isPreRelease(map) ? { warning: PRE_RELEASE_WARNING } : {}),
           migration: map,
         });
       } catch (err) {
@@ -188,6 +203,7 @@ export function buildServer(store: MigrationStore): McpServer {
               status: map.status,
               source_count: map.source_urls.length,
               verification_level: verificationLevelOf(map),
+              ...(isPreRelease(map) ? { warning: PRE_RELEASE_WARNING } : {}),
               last_verified: map.last_verified,
               source_urls: map.source_urls,
               summary: map.summary,

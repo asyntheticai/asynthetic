@@ -6,6 +6,8 @@
  */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -47,35 +49,17 @@ assert.deepEqual(names, [
 ]);
 console.log('ok: listTools ->', names.join(', '));
 
-// 2. Exact-version lookup
+// 2. Stale lifecycle: the SDK map is status "stale" and must never be served,
+// even for an exact-version request.
 let p = payloadOf(
   await client.callTool({
     name: 'get_migration',
     arguments: { package: '@modelcontextprotocol/sdk', from_version: '1.29.0', to_version: '2.0.0-beta.2' },
   }),
 );
-assert.equal(p.found, true);
-assert.equal(p.match_type, 'exact');
-assert.equal(p.resolved_via, 'exact_string');
-assert.equal(p.migration.breaking_changes.length, 21);
-assert.ok(p.migration.source_urls.length >= 1, 'source citations present');
-assert.ok(p.migration.last_verified, 'last_verified present');
-assert.equal(p.source_count, p.migration.source_urls.length, 'source_count derived from source_urls');
-assert.equal(p.verification_level, 'medium', 'draft map with 2+ sources -> medium');
-console.log('ok: get_migration exact -> 21 breaking changes, cited, last_verified', p.migration.last_verified);
-
-// 3. Major-version fallback (agent asks 1.20.0 -> 2.0.0)
-p = payloadOf(
-  await client.callTool({
-    name: 'get_migration',
-    arguments: { package: '@modelcontextprotocol/sdk', from_version: '1.20.0', to_version: '2.0.0' },
-  }),
-);
-assert.equal(p.found, true);
-assert.equal(p.match_type, 'major-version');
-assert.equal(p.resolved_via, 'major_version');
-assert.ok(p.match_note, 'non-exact match is disclosed');
-console.log('ok: get_migration major-version fallback discloses match_note');
+assert.equal(p.found, false, 'stale maps are never served');
+assert.match(p.coverage_hint, /list_available_maps/);
+console.log('ok: get_migration stale SDK map -> found=false (stale never served)');
 
 // 4. Unknown package -> found=false with anti-hallucination guidance
 p = payloadOf(
@@ -90,19 +74,15 @@ assert.ok(Array.isArray(p.available_maps) && p.available_maps.length >= 1);
 assert.match(p.coverage_hint, /list_available_maps/);
 console.log('ok: get_migration unknown package -> found=false + available_maps + coverage_hint');
 
-// 5. get_breaking_changes by major version
+// 5. get_breaking_changes on the stale SDK map -> also not served
 p = payloadOf(
   await client.callTool({
     name: 'get_breaking_changes',
     arguments: { package: '@modelcontextprotocol/sdk', version: '2' },
   }),
 );
-assert.equal(p.found, true);
-assert.equal(p.results.length, 1);
-assert.equal(p.results[0].breaking_changes.length, 21);
-assert.equal(p.results[0].source_count, p.results[0].source_urls.length);
-assert.equal(p.results[0].verification_level, 'medium');
-console.log('ok: get_breaking_changes v2 -> 21 changes + verification_level');
+assert.equal(p.found, false, 'stale maps are never served via get_breaking_changes either');
+console.log('ok: get_breaking_changes stale SDK map -> found=false');
 
 // 6. Vercel AI SDK map: exact lookup
 p = payloadOf(
@@ -128,6 +108,8 @@ p = payloadOf(
 );
 assert.equal(p.found, true);
 assert.equal(p.match_type, 'major-version');
+assert.equal(p.resolved_via, 'major_version');
+assert.ok(p.match_note, 'non-exact match is disclosed');
 console.log('ok: get_migration ai 4.0.0->5 falls back to major-version match');
 
 // 8. get_breaking_changes for ai v5
@@ -151,6 +133,8 @@ p = payloadOf(
 assert.equal(p.found, true);
 assert.equal(p.match_type, 'exact');
 assert.ok(p.migration.breaking_changes.length >= 15, 'next map has 15+ breaking changes');
+assert.equal(p.source_count, p.migration.source_urls.length, 'source_count derived from source_urls');
+assert.equal(p.verification_level, 'medium', 'draft map with 2+ sources -> medium');
 assert.ok(
   p.migration.breaking_changes.some((bc: any) => bc.title.includes('async')),
   'async request APIs are mapped',
@@ -181,6 +165,8 @@ p = payloadOf(
 assert.equal(p.found, true);
 assert.ok(p.results[0].breaking_changes.length >= 15);
 assert.ok(p.results[0].deprecations.length >= 2, 'deprecations present');
+assert.equal(p.results[0].source_count, p.results[0].source_urls.length);
+assert.equal(p.results[0].verification_level, 'medium');
 console.log('ok: get_breaking_changes next v15');
 
 // 12. SemVer caret-range resolution (Next.js): ^14.2.0 -> ^15.0.0
@@ -265,9 +251,9 @@ console.log('ok: check_peer_compatibility unknown pair -> "unknown"');
 
 // list_available_maps: full store, then filtered
 p = payloadOf(await client.callTool({ name: 'list_available_maps', arguments: {} }));
-assert.equal(p.count, 3);
+assert.equal(p.count, 2, 'stale SDK map excluded from listing');
 assert.ok(p.maps.every((m: any) => m.package && m.from_version && m.to_version && m.status && m.last_verified));
-console.log('ok: list_available_maps -> 3 maps with full metadata');
+console.log('ok: list_available_maps -> 2 maps (stale excluded)');
 
 p = payloadOf(await client.callTool({ name: 'list_available_maps', arguments: { package: 'next' } }));
 assert.equal(p.count, 1);
@@ -276,7 +262,74 @@ console.log('ok: list_available_maps package filter -> 1 map');
 
 await client.close();
 
-// 16 + 17. HTTP mode (the Railway path): boot with PORT set, then connect via
+// Pre-release cap + warning: exercised via a synthetic map in a temp data dir
+// so the real curated maps stay untouched. The map is status "verified" with
+// 2 sources — it would be "high" — but targets a pre-release, so it must cap
+// at "medium" and carry the warning.
+const preReleaseDir = mkdtempSync(path.join(os.tmpdir(), 'asynthetic-smoke-'));
+writeFileSync(
+  path.join(preReleaseDir, 'prerelease.json'),
+  JSON.stringify({
+    ecosystem: 'npm',
+    package: 'prerelease-test-pkg',
+    from_version: '8.0.0',
+    to_version: '9.0.0-rc.1',
+    summary: 'Synthetic smoke-test map targeting a pre-release version.',
+    breaking_changes: [
+      {
+        title: 'Example removal',
+        description: 'Synthetic entry for smoke testing.',
+        category: 'removal',
+        affected_symbols: ['example'],
+        before_code: null,
+        after_code: null,
+        migration_note: 'None — synthetic.',
+        source_url: null,
+      },
+    ],
+    deprecations: [],
+    compatible_with: [],
+    source_urls: ['https://example.com/changelog', 'https://example.com/releases'],
+    last_verified: '2026-07-04',
+    status: 'verified',
+    target_release_status: 'pre-release',
+  }),
+);
+const preClient = new Client({ name: 'smoke-prerelease', version: '0.0.1' });
+try {
+  await preClient.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [serverEntry],
+      env: { ...getDefaultEnvironment(), ...localOnlyEnv, MIGRATION_DATA_DIR: preReleaseDir },
+    }),
+  );
+  p = payloadOf(
+    await preClient.callTool({
+      name: 'get_migration',
+      arguments: { package: 'prerelease-test-pkg', from_version: '8.0.0', to_version: '9.0.0-rc.1' },
+    }),
+  );
+  assert.equal(p.found, true);
+  assert.equal(p.verification_level, 'medium', 'verified map targeting pre-release capped at medium');
+  assert.match(p.warning, /pre-release version that has not shipped as stable/);
+  console.log('ok: pre-release target caps verified map at medium + warning');
+
+  p = payloadOf(
+    await preClient.callTool({
+      name: 'get_breaking_changes',
+      arguments: { package: 'prerelease-test-pkg', version: '9.0.0-rc.1' },
+    }),
+  );
+  assert.equal(p.results[0].verification_level, 'medium');
+  assert.match(p.results[0].warning, /pre-release/);
+  console.log('ok: pre-release warning present in get_breaking_changes too');
+} finally {
+  await preClient.close().catch(() => {});
+  rmSync(preReleaseDir, { recursive: true, force: true });
+}
+
+// HTTP mode (the Railway path): boot with PORT set, then connect via
 // modern Streamable HTTP and via the legacy SSE endpoints.
 const PORT = 3917;
 const httpProc = spawn(process.execPath, [serverEntry], {
@@ -320,4 +373,4 @@ try {
   httpProc.kill();
 }
 
-console.log('\nSMOKE TEST PASSED (22/22)');
+console.log('\nSMOKE TEST PASSED (23/23)');

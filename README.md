@@ -107,10 +107,13 @@ Then in the Inspector UI:
     ],
     "source_urls": ["https://nextjs.org/docs/app/guides/upgrading/version-15"],
     "last_verified": "2026-07-03",
-    "status": "draft"
+    "status": "draft",
+    "target_release_status": "stable"        // "pre-release" caps confidence and adds a warning
   }
 }
 ```
+
+When a map targets a version that has not shipped as stable (`target_release_status: "pre-release"`), responses additionally carry a top-level `warning` string telling the agent not to apply the migration to production code without verifying against the current pre-release build.
 
 ### Verification levels
 
@@ -119,6 +122,8 @@ Then in the Inspector UI:
 | `high` | `status: verified` — snippets checked against real before/after code |
 | `medium` | `status: draft` with 2+ independent official sources |
 | `low` | `status: draft` with a single source |
+
+**Pre-release cap:** a map with `target_release_status: "pre-release"` is capped at `medium` regardless of status or source count — even a verified map cannot be `high` when the target version itself may still change before its stable release.
 
 Missed lookups return `found: false`, an explicit do-not-fabricate instruction, a short inline coverage list, and a pointer to `list_available_maps`.
 

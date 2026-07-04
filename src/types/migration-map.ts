@@ -24,6 +24,8 @@ export type ChangeCategory =
 
 export type MigrationStatus = 'draft' | 'verified' | 'stale';
 
+export type TargetReleaseStatus = 'stable' | 'pre-release';
+
 export interface BreakingChange {
   title: string;
   description: string;
@@ -84,6 +86,13 @@ export interface MigrationMap {
   /** ISO date (YYYY-MM-DD) the sources were last checked against this map. */
   last_verified: string;
   status: MigrationStatus;
+  /**
+   * Whether to_version had shipped as a stable release at curation time.
+   * "pre-release" caps verification_level at "medium" and adds a warning to
+   * responses. Optional at the type level so store backends that predate the
+   * field keep compiling; absent means "stable" (the Zod schema defaults it).
+   */
+  target_release_status?: TargetReleaseStatus;
 }
 
 export const BreakingChangeSchema = z.object({
@@ -136,4 +145,5 @@ export const MigrationMapSchema = z.object({
   source_urls: z.array(z.url()).min(1),
   last_verified: z.iso.date(),
   status: z.enum(['draft', 'verified', 'stale']),
+  target_release_status: z.enum(['stable', 'pre-release']).default('stable'),
 }) satisfies z.ZodType<MigrationMap>;
