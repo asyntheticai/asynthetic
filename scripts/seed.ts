@@ -37,11 +37,20 @@ if (maps.length === 0) {
 const supabase = createClient(url, key, { auth: { persistSession: false } });
 
 for (const map of maps) {
-  const { breaking_changes, deprecations, ...migration } = map;
+  const { breaking_changes, deprecations, target_release_status, ...migration } = map;
+
+  // Older databases may lack the target_release_status column. 'stable' is
+  // the serve-time default for an absent value, so only send the field when
+  // it carries information — a 'pre-release' map against an un-migrated DB
+  // then fails loudly instead of silently losing the confidence cap.
+  const migrationRow = {
+    ...migration,
+    ...(target_release_status && target_release_status !== 'stable' ? { target_release_status } : {}),
+  };
 
   const { data: row, error: upsertError } = await supabase
     .from('migrations')
-    .upsert(migration, { onConflict: 'ecosystem,package,from_version,to_version' })
+    .upsert(migrationRow, { onConflict: 'ecosystem,package,from_version,to_version' })
     .select('id')
     .single();
   if (upsertError || !row) {

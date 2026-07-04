@@ -29,6 +29,12 @@ create table migrations (
   source_urls   text[] not null check (cardinality(source_urls) > 0),
   last_verified date not null,
   status        migration_status not null default 'draft',
+  -- 'pre-release' caps verification_level at medium at serve time; see
+  -- src/server.ts. Existing databases: alter table migrations add column
+  -- target_release_status text not null default 'stable'
+  --   check (target_release_status in ('stable', 'pre-release'));
+  target_release_status text not null default 'stable'
+    check (target_release_status in ('stable', 'pre-release')),
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
   unique (ecosystem, package, from_version, to_version)
