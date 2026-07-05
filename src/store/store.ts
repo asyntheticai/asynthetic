@@ -25,11 +25,25 @@ export interface StoreListFilter {
   package?: string;
 }
 
+/** Shape of a query that matched no map. Telemetry only — no user data. */
+export interface UnmatchedQuery {
+  package: string;
+  from_version: string | null;
+  to_version: string | null;
+  ecosystem: string;
+}
+
 export interface MigrationStore {
   /** All non-stale maps for a package (case-insensitive package match). */
   getMapsForPackage(ecosystem: string, pkg: string): Promise<MigrationMap[]>;
   /** Summaries of every non-stale map in the store, optionally filtered. */
   list(filter?: StoreListFilter): Promise<MapSummary[]>;
+  /**
+   * Fire-and-forget telemetry: record a query that matched no served map.
+   * MUST NOT block the response and MUST NOT throw. No-op on backends with
+   * no telemetry sink (local files).
+   */
+  recordUnmatched(query: UnmatchedQuery): void;
   /** Human-readable description of the backing store, for stderr logging. */
   describe(): string;
 }

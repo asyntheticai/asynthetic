@@ -84,4 +84,10 @@ export class LocalFileStore implements MigrationStore {
   describe(): string {
     return `local JSON files (${this.dataDir})`;
   }
+
+  // Local mode has no telemetry sink — unmatched queries are not recorded.
+  // (0-arg is assignable to the 1-arg interface method under structural typing.)
+  recordUnmatched(): void {
+    /* intentional no-op */
+  }
 }

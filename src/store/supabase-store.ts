@@ -4,7 +4,13 @@
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { CompatibilityEntry, MigrationMap } from '../types/migration-map.js';
-import { toSummary, type MapSummary, type MigrationStore, type StoreListFilter } from './store.js';
+import {
+  toSummary,
+  type MapSummary,
+  type MigrationStore,
+  type StoreListFilter,
+  type UnmatchedQuery,
+} from './store.js';
 
 interface BreakingChangeRow {
   position: number;
@@ -101,6 +107,26 @@ export class SupabaseStore implements MigrationStore {
 
   describe(): string {
     return `Supabase (${this.url})`;
+  }
+
+  // Fire-and-forget: kick off the insert without awaiting so the response is
+  // never delayed, and swallow every failure to stderr — telemetry must never
+  // affect a lookup. requested_at defaults to now() in the DB.
+  recordUnmatched(query: UnmatchedQuery): void {
+    void this.client
+      .from('unmatched_queries')
+      .insert({
+        package: query.package,
+        from_version: query.from_version,
+        to_version: query.to_version,
+        ecosystem: query.ecosystem,
+      })
+      .then(
+        ({ error }) => {
+          if (error) console.error('[asynthetic] unmatched_queries insert failed:', error.message);
+        },
+        (err) => console.error('[asynthetic] unmatched_queries insert threw:', err),
+      );
   }
 }
 

@@ -82,6 +82,28 @@ create table deprecations (
 
 create index deprecations_migration_idx on deprecations (migration_id);
 
+-- Telemetry: queries that matched no served map (get_migration / get_breaking_changes
+-- returning found:false). Query SHAPE ONLY — no IP, no session id, no user-identifying
+-- data. Used to prioritise which maps to curate next. from_version is null for
+-- get_breaking_changes (single-version lookups record their version as to_version).
+create table unmatched_queries (
+  id            bigint generated always as identity primary key,
+  package       text not null,
+  from_version  text,
+  to_version    text,
+  ecosystem     text not null,
+  requested_at  timestamptz not null default now()
+);
+
+create index unmatched_queries_recent_idx on unmatched_queries (package, requested_at desc);
+
+-- The serving path writes with the anon key, so anon needs INSERT. Deliberately
+-- NO select policy: telemetry is not publicly readable (service role / dashboard only).
+alter table unmatched_queries enable row level security;
+
+create policy "anon insert unmatched_queries" on unmatched_queries
+  for insert with check (true);
+
 -- Row Level Security: the serving path reads with the anon key, so each table
 -- needs an explicit public SELECT policy — with RLS enabled and no policy,
 -- anon reads silently return zero rows and every lookup answers found:false.

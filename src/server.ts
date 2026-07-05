@@ -18,6 +18,7 @@ import {
   satisfiesRange,
   toSummary,
   type MigrationStore,
+  type UnmatchedQuery,
 } from './store/store.js';
 
 export const SERVER_NAME = 'asynthetic';
@@ -78,7 +79,13 @@ const PRE_RELEASE_WARNING =
   'This migration targets a pre-release version that has not shipped as stable. Do not apply to ' +
   'production code without verifying against the current pre-release build.';
 
-async function notFound(store: MigrationStore, requested: unknown, packageMaps: MigrationMap[]) {
+async function notFound(
+  store: MigrationStore,
+  requested: unknown,
+  packageMaps: MigrationMap[],
+  unmatched: UnmatchedQuery,
+) {
+  store.recordUnmatched(unmatched); // fire-and-forget telemetry; never awaited
   const available = packageMaps.length > 0 ? packageMaps.map(toSummary) : await store.list();
   return jsonResult({
     found: false,
@@ -124,7 +131,7 @@ export function buildServer(store: MigrationStore): McpServer {
         const resolved = resolveMigration(maps, from_version, to_version);
 
         if (!resolved) {
-          return notFound(store, requested, maps);
+          return notFound(store, requested, maps, { package: pkg, ecosystem, from_version, to_version });
         }
 
         const { map, match_type } = resolved;
@@ -182,7 +189,7 @@ export function buildServer(store: MigrationStore): McpServer {
         const matching = target === null ? [] : maps.filter((m) => majorOf(m.to_version) === target.major);
 
         if (matching.length === 0) {
-          return notFound(store, requested, maps);
+          return notFound(store, requested, maps, { package: pkg, ecosystem, from_version: null, to_version: version });
         }
 
         return jsonResult({
