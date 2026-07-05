@@ -2,20 +2,20 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.asyntheticai/asynthetic",
   "title": "Asynthetic",
-  "description": "Verified migration maps for AI agents: what breaks between library versions and how to fix it",
+  "description": "Ground truth for AI coding agents: what breaks between library versions and how to fix it",
   "repository": {
     "url": "https://github.com/asyntheticai/asynthetic",
     "source": "github",
     "id": "1288574050"
   },
   "websiteUrl": "https://github.com/asyntheticai/asynthetic#readme",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "asynthetic",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
