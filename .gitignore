@@ -8,3 +8,4 @@ dist/
 # internal planning docs — never commit these
 npm.txt
 asynthetic-brief.md
+docs/BRAND.md
