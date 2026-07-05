@@ -9,3 +9,6 @@ dist/
 npm.txt
 asynthetic-brief.md
 docs/BRAND.md
+
+# publishing binary — downloaded per-machine, not source
+mcp-publisher.exe
