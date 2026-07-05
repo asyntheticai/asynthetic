@@ -31,6 +31,11 @@ const NOT_FOUND_GUIDANCE =
 function jsonResult(payload: unknown, isError = false) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+    // Structured mirror of the text payload. Once a tool declares an outputSchema,
+    // the SDK requires structuredContent on success results and validates it against
+    // the schema (error results are exempt). Undeclared fields are preserved, not
+    // stripped, so schema-aware clients get the full object plus the text fallback.
+    structuredContent: payload as Record<string, unknown>,
     ...(isError ? { isError: true } : {}),
   };
 }
@@ -97,6 +102,145 @@ async function notFound(
   });
 }
 
+// ---- Output schemas ----
+// Declared per tool so agents and registries (e.g. Smithery) can see each
+// response shape. The SDK validates structuredContent against these on success
+// results; undeclared fields are preserved, so variant fields are marked
+// optional and only always-present fields are required.
+const breakingChangeOut = z.object({
+  title: z.string(),
+  description: z.string(),
+  category: z.string(),
+  affected_symbols: z.array(z.string()),
+  before_code: z.string().nullable(),
+  after_code: z.string().nullable(),
+  migration_note: z.string(),
+  source_url: z.string().nullable(),
+  verification_method: z.string().optional(),
+  after_code_caveat: z.string().optional(),
+  bundler_caveat: z.string().optional(),
+  enforcement_status: z.string().optional(),
+});
+const deprecationOut = z.object({
+  symbol: z.string(),
+  replacement: z.string().nullable(),
+  removal_timeline: z.string().nullable(),
+  note: z.string().nullable(),
+});
+const compatibleWithOut = z.object({
+  package: z.string(),
+  version_range: z.string(),
+  required: z.boolean(),
+  note: z.string().nullable(),
+});
+const migrationOut = z.object({
+  ecosystem: z.string(),
+  package: z.string(),
+  from_version: z.string(),
+  to_version: z.string(),
+  summary: z.string(),
+  breaking_changes: z.array(breakingChangeOut),
+  deprecations: z.array(deprecationOut),
+  compatible_with: z.array(compatibleWithOut),
+  source_urls: z.array(z.string()),
+  last_verified: z.string(),
+  status: z.string(),
+  target_release_status: z.string().optional(),
+  verified_versions: z.array(z.string()).optional(),
+});
+const mapSummaryOut = z.object({
+  ecosystem: z.string(),
+  package: z.string(),
+  from_version: z.string(),
+  to_version: z.string(),
+  status: z.string(),
+  last_verified: z.string(),
+});
+const sourceMapUsedOut = mapSummaryOut.extend({ source_urls: z.array(z.string()) });
+
+const getMigrationOutput = {
+  found: z.boolean().describe('Whether a verified map covers the requested upgrade'),
+  requested: z.object({
+    package: z.string(),
+    ecosystem: z.string(),
+    from_version: z.string(),
+    to_version: z.string(),
+  }),
+  match_type: z.string().optional().describe('"exact" | "semver-range" | "major-version"'),
+  resolved_via: z.string().optional().describe('"exact_string" | "semver_range" | "major_version"'),
+  match_note: z.string().optional(),
+  source_count: z.number().optional(),
+  verification_level: z.string().optional().describe('"high" | "medium" | "low"'),
+  warning: z.string().optional(),
+  migration: migrationOut.optional().describe('The full migration map (present when found)'),
+  message: z.string().optional().describe('Anti-hallucination guidance (present when not found)'),
+  available_maps: z.array(mapSummaryOut).optional(),
+  available_maps_truncated: z.boolean().optional(),
+  coverage_hint: z.string().optional(),
+};
+
+const getBreakingChangesOutput = {
+  found: z.boolean(),
+  requested: z.object({ package: z.string(), ecosystem: z.string(), version: z.string() }),
+  results: z
+    .array(
+      z.object({
+        from_version: z.string(),
+        to_version: z.string(),
+        match_type: z.string(),
+        resolved_via: z.string(),
+        status: z.string(),
+        source_count: z.number(),
+        verification_level: z.string(),
+        warning: z.string().optional(),
+        last_verified: z.string(),
+        source_urls: z.array(z.string()),
+        summary: z.string(),
+        breaking_changes: z.array(breakingChangeOut),
+        deprecations: z.array(deprecationOut),
+      }),
+    )
+    .optional(),
+  message: z.string().optional(),
+  available_maps: z.array(mapSummaryOut).optional(),
+  available_maps_truncated: z.boolean().optional(),
+  coverage_hint: z.string().optional(),
+};
+
+const listAvailableMapsOutput = {
+  count: z.number(),
+  maps: z.array(mapSummaryOut),
+};
+
+const checkPeerCompatibilityOutput = {
+  compatible: z
+    .union([z.boolean(), z.literal('unknown')])
+    .describe('true | false | "unknown" ("unknown" = absence of data, not incompatibility)'),
+  requested: z.object({
+    package_a: z.string(),
+    version_a: z.string(),
+    package_b: z.string(),
+    version_b: z.string(),
+    ecosystem: z.string(),
+  }),
+  reason: z.string(),
+  checks: z.array(
+    z.object({
+      declared_by: z.string(),
+      requires: z.string(),
+      required: z.boolean(),
+      note: z.string().nullable(),
+      satisfied: z.union([z.boolean(), z.literal('unknown')]),
+    }),
+  ),
+  source_maps_used: z.array(sourceMapUsedOut),
+};
+
+const checkCompatibilityOutput = {
+  implemented: z.boolean().describe('Always false — this tool is a reserved stub'),
+  message: z.string(),
+};
+
 export function buildServer(store: MigrationStore): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
@@ -122,6 +266,7 @@ export function buildServer(store: MigrationStore): McpServer {
           .describe('Version or SemVer range upgrading to, e.g. "2.0.0", "^15.0.0", "2.x"'),
         ecosystem: ecosystemArg,
       },
+      outputSchema: getMigrationOutput,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ package: pkg, from_version, to_version, ecosystem }) => {
@@ -179,6 +324,7 @@ export function buildServer(store: MigrationStore): McpServer {
           .describe('The version (or SemVer range) whose breaking changes you want, e.g. "2.0.0", "^15.0.0"'),
         ecosystem: ecosystemArg,
       },
+      outputSchema: getBreakingChangesOutput,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ package: pkg, version, ecosystem }) => {
@@ -237,6 +383,7 @@ export function buildServer(store: MigrationStore): McpServer {
         ecosystem: z.string().optional().describe('Filter by ecosystem, e.g. "npm"'),
         package: z.string().optional().describe('Filter by exact package name (case-insensitive)'),
       },
+      outputSchema: listAvailableMapsOutput,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ ecosystem, package: pkg }) => {
@@ -265,6 +412,7 @@ export function buildServer(store: MigrationStore): McpServer {
         version_b: z.string().min(1).describe('Version (or SemVer range) of package_b, e.g. "18.2.0"'),
         ecosystem: ecosystemArg,
       },
+      outputSchema: checkPeerCompatibilityOutput,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ package_a, version_a, package_b, version_b, ecosystem }) => {
@@ -360,12 +508,13 @@ export function buildServer(store: MigrationStore): McpServer {
         'Do not infer compatibility (or incompatibility) from this response. For a static SemVer check ' +
         'between two known package versions, use check_peer_compatibility instead.',
       inputSchema: {
-        package_a: z.string().min(1),
-        version_a: z.string().min(1),
-        package_b: z.string().min(1),
-        version_b: z.string().min(1),
+        package_a: z.string().min(1).describe('First package name (planned project-aware check), e.g. "next"'),
+        version_a: z.string().min(1).describe('Version of package_a, e.g. "15.0.0"'),
+        package_b: z.string().min(1).describe('Second package name, e.g. "react"'),
+        version_b: z.string().min(1).describe('Version of package_b, e.g. "19.0.0"'),
         ecosystem: ecosystemArg,
       },
+      outputSchema: checkCompatibilityOutput,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () =>
